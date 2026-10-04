@@ -1,0 +1,9 @@
+{
+  "makepad": {
+    "repository": "https://github.com/OctoSense-org/makepad.git",
+    "revision": "c155f61d0e1600d2ec474209374444a38a09a470",
+    "directory": ".runtime/makepad"
+  },
+  "ui_language": "Makepad script_mod! / makepad-script (Octoscript UI dialect)",
+  "notes": "Standalone native app. No Rinx, App Hub or contained-app runtime. The canonical Octoscript workflow VM is a separate future integration."
+}

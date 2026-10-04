@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/document-core", "crates/project-store", "apps/desktop"]
+default-members = ["crates/document-core"]
+exclude = [".runtime/makepad"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+
+[workspace.dependencies]
+document-core = { path = "crates/document-core" }
+project-store = { path = "crates/project-store" }
+makepad-widgets = { path = ".runtime/makepad/widgets" }
+makepad-test = { path = ".runtime/makepad/libs/makepad_test" }

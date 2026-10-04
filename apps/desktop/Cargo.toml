@@ -1,0 +1,24 @@
+[package]
+name = "docgenie-desktop"
+default-run = "docgenie-desktop"
+description = "DocGenie: a native local-first Markdown editor with agent-powered comment threads"
+repository = "https://github.com/sundy-li/DocGenie"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+document-core.workspace = true
+project-store.workspace = true
+makepad-widgets.workspace = true
+ureq = { version = "3", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+pulldown-cmark = { version = "0.12.2", path = "../../.runtime/makepad/libs/pulldown-cmark", default-features = false }
+
+image = { version = "0.25", default-features = false, features = ["png"] }
+arboard = { version = "3", default-features = false, features = ["image-data"] }
+
+[dev-dependencies]
+makepad-test.workspace = true
