@@ -121,9 +121,10 @@ fn configured_transport_edits_and_replies_for_two_rounds() {
             .fill("补充一个例子");
         // Open Preferences and toggle default_auto_modify so the upcoming
         // comment_send triggers the agent automatically.
-        app.locator(Selector::id("preferences_button")).click();
+        support::open_settings(&app);
+        app.locator(Selector::id("pref_nav_agent")).click();
         app.locator(Selector::id("pref_default_auto")).click();
-        app.locator(Selector::id("preferences_save")).click();
+        app.locator(Selector::id("preferences_done")).click();
         app.locator(Selector::id("preferences_overlay"))
             .wait_hidden();
         app.locator(Selector::id("comment_send")).click();
@@ -139,7 +140,14 @@ fn configured_transport_edits_and_replies_for_two_rounds() {
         app.locator(Selector::id("transcript")).wait_text(
             "你\n补充一个例子\n\nAgent\n已补充例子\n\n你\n再简短一点\n\nAgent\n已按回复精简",
         );
-        app.locator(Selector::id("undo_button")).click();
+        app.locator(Selector::id("mode_edit")).click();
+        app.press_key_with_modifiers(
+            makepad_test::KeyCode::KeyZ,
+            makepad_test::KeyModifiers {
+                logo: true,
+                ..Default::default()
+            },
+        );
         app.locator(Selector::id("live_editor"))
             .wait_text("第一轮修改");
     })

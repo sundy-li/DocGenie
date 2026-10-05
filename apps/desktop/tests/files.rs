@@ -21,7 +21,7 @@ fn create_autosave_switch_and_restart_plain_markdown() {
         assert_eq!(std::fs::read_to_string(files[0].path()).unwrap(), text);
         app.locator(Selector::id("new_document")).click();
         app.locator(Selector::id("live_editor"))
-            .wait_text("# 未命名文档\n\n开始写作。\n");
+            .wait_text("# 未命名文档\n\n");
         app.locator(Selector::id("save_label"))
             .wait_text("已自动保存到本地");
         assert_eq!(
@@ -39,7 +39,7 @@ fn create_autosave_switch_and_restart_plain_markdown() {
         app.locator(Selector::id("save_label"))
             .wait_text("已自动保存到本地");
         app.locator(Selector::id("live_editor"))
-            .wait_text("# 未命名文档\n\n开始写作。\n");
+            .wait_text("# 未命名文档\n\n");
         assert!(
             !app.widget_snapshot()
                 .iter()

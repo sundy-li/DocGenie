@@ -15,6 +15,8 @@ ureq = { version = "3", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
+time = { version = "0.3", features = ["local-offset"] }
+unicode-segmentation = { version = "1.12.0", path = "../../.runtime/makepad/libs/unicode/unicode-segmentation" }
 pulldown-cmark = { version = "0.12.2", path = "../../.runtime/makepad/libs/pulldown-cmark", default-features = false }
 
 image = { version = "0.25", default-features = false, features = ["png"] }

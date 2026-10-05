@@ -4,7 +4,7 @@ DocGenie is licensed under Apache-2.0. Dependencies retain their own licenses; s
 
 ## Makepad
 
-`apps/desktop/src/markdown.rs` is adapted from the Makepad Markdown widget, with application-owned local image and link rendering changes. The original widget is from the pinned Makepad checkout specified in `runtime.lock.json` (OctoSense-org/makepad, revision `c155f61d0e1600d2ec474209374444a38a09a470`). The Makepad widgets manifest declares `MIT OR Apache-2.0`; the upstream MIT notice is reproduced below.
+`apps/desktop/src/markdown.rs` is adapted from the Makepad Markdown widget, with application-owned media and cell editing changes. `apps/desktop/src/styled_input.rs` is adapted from the pinned Makepad TextInput widget, keeping native input, IME, selection and history while adding application-owned styled glyph layout. The original widget is from the pinned Makepad checkout specified in `runtime.lock.json` (OctoSense-org/makepad, revision `c155f61d0e1600d2ec474209374444a38a09a470`). The Makepad widgets manifest declares `MIT OR Apache-2.0`; the upstream MIT notice is reproduced below.
 
 MIT License
 

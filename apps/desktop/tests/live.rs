@@ -31,9 +31,10 @@ fn minimax_two_round_native_comment_workflow() {
             .fill("只把第二段换成：这是一款本地 Markdown 编辑工具。保留标题和结尾。");
         // Enable auto-modify via Preferences (the only place this setting
         // lives now; the sidebar checkbox is gone).
-        app.locator(Selector::id("preferences_button")).click();
+        support::open_settings(&app);
+        app.locator(Selector::id("pref_nav_agent")).click();
         app.locator(Selector::id("pref_default_auto")).click();
-        app.locator(Selector::id("preferences_save")).click();
+        app.locator(Selector::id("preferences_done")).click();
         app.locator(Selector::id("preferences_overlay"))
             .wait_hidden();
         app.locator(Selector::id("comment_send")).click();

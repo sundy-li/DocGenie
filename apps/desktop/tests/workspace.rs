@@ -28,11 +28,11 @@ fn article_is_bounded_and_centered_and_search_reuses_switcher() {
         app.locator(Selector::id("comment_input")).click();
         for nav in [true, false] {
             if !nav {
-                app.locator(Selector::id("collapse_navigation")).click();
+                app.locator(Selector::id("toggle_navigation")).click();
             }
             for comments in [true, false] {
                 if !comments {
-                    app.locator(Selector::id("collapse_comments")).click();
+                    app.locator(Selector::id("toggle_comments")).click();
                 }
                 let (surface_x, surface_width) = rect(&app, "article_surface");
                 let (column_x, column_width) = rect(&app, "article_column");
@@ -43,11 +43,11 @@ fn article_is_bounded_and_centered_and_search_reuses_switcher() {
                 );
                 assert!((column_x - surface_x - (surface_width - column_width) / 2.0).abs() <= 2.0);
                 if !comments {
-                    app.locator(Selector::id("expand_comments")).click();
+                    app.locator(Selector::id("toggle_comments")).click();
                 }
             }
         }
-        app.locator(Selector::id("expand_navigation")).click();
+        app.locator(Selector::id("toggle_navigation")).click();
         app.locator(Selector::id("document_search")).click();
         app.locator(Selector::id("switcher_overlay")).wait_visible();
         app.press_key(KeyCode::Escape);
@@ -77,9 +77,9 @@ fn narrow_workspace_keeps_document_visible_and_draft_when_navigation_opens() {
         app.locator(Selector::id("comment_input"))
             .fill("窄窗口保留草稿");
         assert!(rect(&app, "article_column").1 >= 460.0);
-        app.locator(Selector::id("collapse_comments")).click();
+        app.locator(Selector::id("toggle_comments")).click();
         app.locator(Selector::id("navigation_panel")).wait_visible();
-        app.locator(Selector::id("expand_comments")).click();
+        app.locator(Selector::id("toggle_comments")).click();
         app.locator(Selector::id("navigation_panel")).wait_hidden();
         app.locator(Selector::id("comment_input"))
             .assert_value("窄窗口保留草稿");

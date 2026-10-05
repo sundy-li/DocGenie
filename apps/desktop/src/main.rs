@@ -1,11 +1,22 @@
 mod agent;
+mod autosave;
+mod ui;
+use autosave::Autosave;
 mod clipboard;
+mod comment_meta;
+mod comment_quote;
 mod context_menu;
 mod discussion;
+mod edit_projection;
+mod fonts;
 mod live_editor;
 mod markdown;
 mod preferences;
 mod reading;
+mod styled_input;
+mod styled_layout;
+mod tab_menu;
+mod tabs;
 mod thread_list;
 mod typography;
 mod workspace;
@@ -37,6 +48,19 @@ fn tree_rows() -> &'static Mutex<Vec<TreeRow>> {
 }
 const MAX_TABS: usize = 6;
 const SWITCH_SLOTS: usize = 8;
+const FONT_ROW_SLOTS: usize = 8;
+fn font_row_id(i: usize) -> LiveId {
+    [
+        id!(font_row0),
+        id!(font_row1),
+        id!(font_row2),
+        id!(font_row3),
+        id!(font_row4),
+        id!(font_row5),
+        id!(font_row6),
+        id!(font_row7),
+    ][i]
+}
 fn tab_id(i: usize) -> LiveId {
     [
         id!(tab0),
@@ -70,253 +94,6 @@ fn outline() -> &'static Mutex<Vec<OutlineEntry>> {
     OUTLINE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-script_mod! {
-    use mod.prelude.widgets.*
-    let Caption = Label{draw_text +: {color: #x626b78 text_style +: {font_size: 12}}}
-    let Action = ButtonFlatter{height: 32 padding: Inset{left: 10 right: 10 top: 6 bottom: 6} draw_text +: {color: #x303740 color_hover: #x2162c2 color_down: #x2162c2}}
-    let IconAction = ButtonFlatterIcon{
-        width: 32 height: 32
-        padding: Inset{left: 0 right: 0 top: 0 bottom: 0}
-        align: Align{x: 0.5 y: 0.5}
-        grab_key_focus: false
-        icon_walk: Walk{width: 18 height: 18}
-        draw_icon +: {color: #x4b5563}
-        draw_bg +: {border_radius: 4.0 border_size: 0.0 color: #00000000 color_hover: #xeef1f5 color_down: #xe2e7ee color_focus: #00000000}
-    }
-    mod.widgets.Outline = #(Outline::register_widget(vm))
-    let Navigation = mod.widgets.Outline{
-        width: Fill height: Fill
-        list := PortalList{width: Fill height: Fill flow: Down
-            Row := View{width: Fill height: Fit padding: Inset{left: 8 right: 8 top: 2 bottom: 2}
-                heading := ButtonFlatter{width: Fill align: Align{x: 0.0 y: 0.5} text: "标题" draw_text +: {color: #x555f6d color_hover: #x7c3aed}}
-            }
-            Empty := View{width: Fill height: 1}
-        }
-    }
-    let TreeFold = ButtonFlatterIcon{
-        width: 20 height: 22
-        padding: Inset{left: 0 right: 0 top: 0 bottom: 0}
-        align: Align{x: 0.5 y: 0.5}
-        grab_key_focus: false
-        icon_walk: Walk{width: 12 height: 12}
-        draw_icon +: {color: #x6b7280}
-        draw_bg +: {border_radius: 3.0 border_size: 0.0 color: #00000000 color_hover: #x00000014 color_down: #x00000024 color_focus: #00000000}
-    }
-    let FileTree = mod.widgets.Outline{
-        document_mode: true
-        width: Fill height: Fill
-        list := PortalList{width: Fill height: Fill flow: Down
-            Row := RectView{width: Fill height: 34 flow: Right align: Align{x: 0.0 y: 0.5} padding: Inset{left: 8 right: 8} draw_bg +: {color: #x00000000 border_radius: 6.0 border_size: 0.0}
-                indent := View{width: 0 height: 1}
-                fold_open := TreeFold{visible: false draw_icon.svg: crate_resource("self:resources/icons/chevron-down.svg")}
-                fold_closed := TreeFold{visible: false draw_icon.svg: crate_resource("self:resources/icons/chevron-right.svg")}
-                file_gap := View{width: 20 height: 1}
-                heading := ButtonFlatter{width: Fill height: 30 padding: Inset{left: 4 right: 4 top: 0 bottom: 0} align: Align{x: 0.0 y: 0.5} text: "文档" draw_text +: {color: #x3f4650 color_hover: #x111827 text_style +: {font_size: 12}}}
-            }
-            Empty := View{width: Fill height: 1}
-        }
-    }
-    let DocTab = RectView{visible: false width: Fit height: 30 flow: Right align: Align{x: 0.0 y: 0.5} padding: Inset{left: 6 right: 2} draw_bg +: {color: #x00000000 border_radius: 6.0 border_size: 0.0}
-        title := ButtonFlatter{width: Fit height: 28 padding: Inset{left: 6 right: 6 top: 0 bottom: 0} text: "文档" draw_text +: {color: #x4b5563 color_hover: #x111827 text_style +: {font_size: 12}}}
-        close := TreeFold{draw_icon.svg: crate_resource("self:resources/icons/close.svg")}
-    }
-    let SwitchRow = ButtonFlatter{visible: false width: Fill height: 30 padding: Inset{left: 12 right: 12 top: 0 bottom: 0} align: Align{x: 0.0 y: 0.5} text: "" draw_text +: {color: #x303740 color_hover: #x7c3aed text_style +: {font_size: 13}}}
-    startup() do #(App::script_component(vm)){
-        ui: Root{
-            main_window := Window{
-                window.title: "DocGenie"
-                window.inner_size: vec2(1400, 900)
-                body +: {flow: Overlay spacing: 0
-                    // The overlay and page share one window-sized stack.
-                    page := View{width: Fill height: Fill flow: Down
-                    SolidView{width: Fill height: 44 flow: Right align: Align{x: 0.0 y: 0.5} padding: Inset{left: 8 right: 8 top: 6 bottom: 6} spacing: 3 draw_bg.color: #xf8f9fb
-                        expand_navigation_bar := View{visible: false width: Fit height: Fit
-                            expand_navigation := IconAction{draw_icon.svg: crate_resource("self:resources/icons/chevron-double-right.svg")}
-                        }
-                        tab0 := DocTab{}
-                        tab1 := DocTab{}
-                        tab2 := DocTab{}
-                        tab3 := DocTab{}
-                        tab4 := DocTab{}
-                        tab5 := DocTab{}
-                        View{width: Fill height: 30}
-                        agent_cancel := IconAction{visible: false draw_icon.svg: crate_resource("self:resources/icons/stop.svg")}
-                        retry_save := IconAction{draw_icon.svg: crate_resource("self:resources/icons/retry.svg")}
-                        undo_button := IconAction{draw_icon.svg: crate_resource("self:resources/icons/undo.svg")}
-                        mode_edit := Action{text: "编辑" grab_key_focus: false}
-                        mode_read := Action{visible: false text: "阅读" grab_key_focus: false}
-                        preferences_button := IconAction{draw_icon.svg: crate_resource("self:resources/icons/settings.svg")}
-                        expand_comments_bar := View{visible: false width: Fit height: Fit
-                            expand_comments := IconAction{draw_icon.svg: crate_resource("self:resources/icons/chevron-double-left.svg")}
-                        }
-                    }
-                    SolidView{width: Fill height: Fill flow: Right spacing: 1 draw_bg.color: #xe7eaee
-                        navigation_panel := SolidView{width: 248 height: Fill flow: Down padding: 12 spacing: 10 draw_bg.color: #xf8f9fb
-                            View{width: Fill height: 32 flow: Right align: Align{x: 0.0 y: 0.5}
-                                Label{text: "DocGenie" draw_text +: {color: #x20262e text_style +: {font_size: 16}}}
-                                View{width: Fill height: 1}
-                                collapse_navigation := IconAction{draw_icon.svg: crate_resource("self:resources/icons/chevron-double-left.svg")}
-                            }
-                            new_document := Action{width: Fill text: "+  新建文档" align: Align{x: 0.0 y: 0.5}}
-                            document_search := Action{width: Fill text: "搜索 / 跳转文档     ⌘O" align: Align{x: 0.0 y: 0.5} draw_text +: {color: #x687381}}
-                            View{width: Fill height: 32 flow: Right align: Align{x: 0.0 y: 0.5} spacing: 2
-                                Caption{text: "文档"}
-                                View{width: Fill height: 1}
-                                new_folder := IconAction{draw_icon.svg: crate_resource("self:resources/icons/folder-plus.svg")}
-                                rename_node := IconAction{draw_icon.svg: crate_resource("self:resources/icons/edit.svg")}
-                                delete_node := IconAction{draw_icon.svg: crate_resource("self:resources/icons/trash.svg")}
-                            }
-                            document_list := FileTree{}
-                            Caption{text: "本地文档库"}
-                        }
-                        article_surface := SolidView{width: Fill height: Fill flow: Down align: Align{x: 0.5 y: 0.0} padding: Inset{left: 24 right: 24 top: 32 bottom: 12} draw_bg.color: #xffffff
-                        article_column := View{width: Fill max_width: 760 height: Fill flow: Down spacing: 12
-                            title_input := TextInput{width: Fill height: 44 empty_text: "请输入标题"
-                                draw_text +: {color: #x20262e color_empty: #xc5cad3 text_style +: {font_size: 28}}
-                                draw_bg +: {color: #xffffff color_empty: #xffffff color_focus: #xffffff color_hover: #xffffff border_size: 0.0}
-                                draw_cursor +: {color: #x2563eb}
-                                blink_speed: 0.5
-                            }
-                            View{width: Fill height: Fit flow: Right spacing: 12
-                                author_label := Caption{text: "你"}
-                                modified_label := Caption{text: "今天修改" draw_text +: {color: #x9099a3}}
-                            }
-                            live_panel := View{width: Fill height: Fill
-                                live_editor := mod.widgets.LiveEditor{}
-                            }
-                            preview_panel := View{visible: false width: Fill height: Fill
-                                preview := mod.widgets.Reading{}
-                            }
-                            }
-                            View{width: Fill height: Fit flow: Right spacing: 10
-                                save_label := Caption{text: "正在准备本地文档…"}
-                                View{width: Fill height: 1}
-                                revision_label := Caption{text: "Revision 0" draw_text +: {color: #x687381 text_style +: {font_size: 10}}}
-                            }
-                            status_label := Caption{text: "选中文本后添加评论 · ⌘⇧M" draw_text +: {text_style +: {font_size: 11}}}
-                        }
-                        comments_panel := SolidView{width: 340 height: Fill flow: Down padding: 16 spacing: 10 draw_bg.color: #xf8f9fb
-                            View{width: Fill height: Fit flow: Right spacing: 2 padding: Inset{left: 0 right: 0 top: 0 bottom: 4}
-                                tab_outline := Action{text: "大纲" grab_key_focus: false}
-                                tab_comments := Action{text: "评论" grab_key_focus: false}
-                                View{width: Fill height: 1}
-                                collapse_comments := IconAction{draw_icon.svg: crate_resource("self:resources/icons/chevron-double-right.svg")}
-                            }
-                            outline_body := View{visible: false width: Fill height: Fill flow: Down spacing: 6
-                                Label{text: "大纲" draw_text +: {color: #x303740 text_style +: {font_size: 14}}}
-                                navigation := Navigation{}
-                            }
-                            comments_body := View{width: Fill height: Fill flow: Down spacing: 8
-                            View{width: Fill height: Fit flow: Right spacing: 8
-                                filter_open := Action{text: "未解决 0" grab_key_focus: false}
-                                filter_resolved := Action{text: "已解决 0" grab_key_focus: false}
-                            }
-                            threads := mod.widgets.ThreadList{}
-                            threads_empty := Caption{text: "还没有评论。选中文本后添加评论。"}
-                            View{width: Fill height: Fit flow: Right spacing: 6
-                                comments_label := Label{text: "评论 (0)" draw_text +: {color: #x303740 text_style +: {font_size: 14}}}
-                                View{width: Fill height: 1}
-                                thread_prev := Action{text: "↑" width: 28 height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
-                                thread_next := Action{text: "↓" width: 28 height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
-                                thread_resolve_toggle := Action{text: "解决" width: Fit height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
-                            }
-                            SolidView{width: Fill height: 1 draw_bg.color: #xe7eaee}
-                            quote := TextInput{width: Fill height: 56 is_multiline: true is_read_only: true empty_text: "选区原文"
-                                draw_bg +: {color: #xfff9e8 color_empty: #xfff9e8 color_hover: #xfff9e8 color_focus: #xfff9e8 border_color_top: #xe0bc54 border_size_top: 1.0}
-                            }
-                            thread_state := Caption{text: "尚未选择段落"}
-                            thread_rebind := Action{text: "将当前选段绑定到此线程"}
-                            transcript := mod.widgets.Discussion{}
-                            View{width: Fill height: 1 draw_bg.color: #xe8eaed}
-                            Label{text: "回复" draw_text +: {color: #x626b78 text_style +: {font_size: 12}}}
-                            comment_input := TextInput{width: Fill height: 64 is_multiline: true empty_text: "添加评论，或继续回复…" blink_speed: 0.5
-                                draw_bg +: {color: #xffffff color_empty: #xffffff color_hover: #xffffff color_focus: #xffffff border_color: #xdce1e8 border_color_focus: #x2563eb}
-                                draw_cursor +: {color: #x2563eb}
-                            }
-                            View{width: Fill height: Fit flow: Right spacing: 8
-                                comment_send := Action{text: "发送评论 / 回复"}
-                                comment_new := Action{text: "新评论"}
-                            }
-                            agent_hint := Caption{text: "Agent 默认关闭 · ⌘, 设置"}
-                            }
-                        }
-                    }
-                    }
-                    comment_menu := mod.widgets.CommentMenu{}
-                    comment_composer := mod.widgets.CommentComposer{}
-                    dialog_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-                        SolidView{width: Fill height: Fill draw_bg.color: #x00000060}
-                        SolidView{width: 380 height: Fit align: Align{x: 0.5 y: 0.2} flow: Down padding: 20 spacing: 12 draw_bg.color: #xffffff
-                            dialog_title := Label{text: "" draw_text +: {color: #x20262e text_style +: {font_size: 15}}}
-                            dialog_input := TextInput{width: Fill height: 30 empty_text: "名称" blink_speed: 0.5
-                                draw_bg +: {color: #xffffff color_focus: #xffffff color_hover: #xffffff border_color: #xdce1e8 border_color_focus: #x7c3aed}
-                                draw_cursor +: {color: #x7c3aed}
-                            }
-                            dialog_status := Caption{text: ""}
-                            View{width: Fill height: Fit flow: Right spacing: 8
-                                View{width: Fill height: 1}
-                                dialog_cancel := Action{text: "取消"}
-                                dialog_ok := Action{text: "确定"}
-                            }
-                        }
-                    }
-                    switcher_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-                        SolidView{width: Fill height: Fill draw_bg.color: #x00000040}
-                        SolidView{width: 520 height: Fit align: Align{x: 0.5 y: 0.12} flow: Down padding: 8 spacing: 2 draw_bg.color: #xffffff
-                            switcher_input := TextInput{width: Fill height: 34 empty_text: "跳转到文档…" blink_speed: 0.5
-                                draw_bg +: {color: #xffffff color_focus: #xffffff color_hover: #xffffff border_color: #xdce1e8 border_color_focus: #x7c3aed}
-                                draw_cursor +: {color: #x7c3aed}
-                            }
-                            sw0 := SwitchRow{}
-                            sw1 := SwitchRow{}
-                            sw2 := SwitchRow{}
-                            sw3 := SwitchRow{}
-                            sw4 := SwitchRow{}
-                            sw5 := SwitchRow{}
-                            sw6 := SwitchRow{}
-                            sw7 := SwitchRow{}
-                        }
-                    }
-                    preferences_overlay := View{visible: false width: Fill height: Fill flow: Overlay
-                        SolidView{width: Fill height: Fill draw_bg.color: #x000000a0}
-                        SolidView{width: 480 height: Fit align: Align{x: 0.5 y: 0.2} flow: Down padding: 24 spacing: 14 draw_bg.color: #xffffff
-                            Label{text: "Preferences" draw_text +: {color: #x20262e text_style +: {font_size: 18}}}
-                            Label{text: "  模型（只读）" draw_text +: {color: #x5d6672 text_style +: {font_size: 13}}}
-                            SolidView{width: Fill height: Fit flow: Down padding: Inset{left: 0 right: 0 top: 6 bottom: 6} spacing: 4 draw_bg.color: #xf8f9fb
-                                pref_model_endpoint_label := Caption{text: "Endpoint: …"}
-                                pref_model_name_label := Caption{text: "Model: …"}
-                                pref_model_key_label := Caption{text: "API Key: …"}
-                            }
-                            Label{text: "  Agent" draw_text +: {color: #x5d6672 text_style +: {font_size: 13}}}
-                            pref_default_auto := CheckBox{text: "默认启用 Agent 自动修改（外发段落+评论）"}
-                            Label{text: "  编辑器" draw_text +: {color: #x5d6672 text_style +: {font_size: 13}}}
-                            SolidView{width: Fill height: Fit flow: Down spacing: 4
-                                Label{text: "字号" draw_text +: {color: #x626b78 text_style +: {font_size: 12}}}
-                                pref_font_size := TextInput{width: 120 height: 28 empty_text: "14"
-                                    draw_bg +: {color: #xffffff color_focus: #xffffff color_hover: #xffffff border_color: #xdce1e8 border_color_focus: #x2563eb}
-                                    draw_cursor +: {color: #x2563eb}
-                                }
-                            }
-                            pref_auto_save := CheckBox{text: "启用自动保存（防丢失）"}
-                            SolidView{width: Fill height: 1 draw_bg.color: #xe8eaed}
-                            View{width: Fill height: Fit flow: Right spacing: 8
-                                preferences_cancel := Action{text: "取消"}
-                                preferences_save := Action{text: "保存"}
-                            }
-                            preferences_status := Caption{text: ""}
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 #[derive(Script, ScriptHook, Widget)]
 struct Outline {
     #[deref]
@@ -435,6 +212,8 @@ pub struct App {
     #[rust]
     save_timer: Timer,
     #[rust]
+    autosave: Autosave,
+    #[rust]
     save_failed: bool,
     #[rust]
     agent_rx: Option<std::sync::mpsc::Receiver<AgentReply>>,
@@ -442,6 +221,14 @@ pub struct App {
     agent_queue: VecDeque<usize>,
     #[rust]
     closing: bool,
+    #[rust]
+    quitting: bool,
+    #[rust]
+    pending_tabs: Option<Vec<String>>,
+    #[rust]
+    tab_menu_target: Option<String>,
+    #[rust]
+    tab_menu_pointer: bool,
     #[rust]
     selected: Option<Range<usize>>,
     #[rust]
@@ -456,8 +243,15 @@ pub struct App {
     preferences: Preferences,
     #[rust]
     preferences_visible: bool,
+    /// Which Preferences page the left nav shows: 0 外观, 1 编辑器, 2 Agent.
     #[rust]
-    preferences_draft: Option<Preferences>,
+    preferences_page: usize,
+    /// Set once the background installed-font scan has finished and the
+    /// configured code font has been applied (Preferences re-applies it too).
+    #[rust]
+    fonts_ready: bool,
+    #[rust]
+    document_selection: bool,
     #[rust]
     editing: bool,
     #[rust]
@@ -520,12 +314,14 @@ impl App {
         self.ui
             .view(cx, ids!(comments_panel))
             .set_visible(cx, comments);
-        self.ui
-            .view(cx, ids!(expand_navigation_bar))
-            .set_visible(cx, !navigation);
-        self.ui
-            .view(cx, ids!(expand_comments_bar))
-            .set_visible(cx, !comments);
+        for (id, shown) in [
+            (ids!(toggle_navigation), navigation),
+            (ids!(toggle_comments), comments),
+        ] {
+            let mut button = self.ui.button(cx, id);
+            let color = Vec4f::from_u32(if shown { 0xe9edf3ff } else { 0x00000000 });
+            script_apply_eval!(cx,button,{draw_bg +: {color: #(color)}});
+        }
         // Relayout invalidates the menu's old screen position, not its selection.
         if let Some(mut menu) = self
             .ui
@@ -577,6 +373,8 @@ impl App {
     /// text with `new_title`. Empty titles strip the line entirely so the
     /// next sync shows the placeholder. Driven by the title_input TextInput.
     fn apply_title_change(&mut self, cx: &mut Cx, new_title: &str) {
+        // The top document title is a special plain field: no displayed
+        // Markdown prefix. Only serialization adds the H1 marker.
         let trimmed = new_title.trim();
         let mut text = self.workbench.text().to_owned();
         let found = reading::title_block(&text);
@@ -593,7 +391,12 @@ impl App {
                 }
                 text.replace_range(range.start..end, "");
             }
-            (None, false) => text.insert_str(0, &format!("# {trimmed}\n\n")),
+            (None, false) => {
+                // Clearing a title leaves the original blank separator in the
+                // body. Reuse it when retyping instead of adding another one.
+                let separator = if text.starts_with('\n') { "\n" } else { "\n\n" };
+                text.insert_str(0, &format!("# {trimmed}{separator}"));
+            }
             (None, true) => {}
         }
         // Push through the domain's trusted set_text so undo / revision stay
@@ -634,7 +437,11 @@ impl App {
             None => String::new(),
         };
         let title_widget = self.ui.text_input(cx, ids!(title_input));
-        if title_widget.text() != target {
+        let focused = title_widget.borrow().is_some_and(|t| t.key_focus(cx));
+        let current = title_widget.text();
+        // During typing, normalization of edge whitespace must not rewrite
+        // the focused buffer, interrupt IME or reset the native undo stack.
+        if current != target && !(focused && current.trim() == target) {
             title_widget.set_text(cx, &target);
         }
 
@@ -705,6 +512,12 @@ impl App {
         {
             live.set_readonly(cx, value);
         }
+        // The title edits the outgoing document through the workbench; without
+        // this, a title typed while an async document switch is in flight is
+        // silently discarded when the Loaded reply replaces the workbench.
+        self.ui
+            .text_input(cx, ids!(title_input))
+            .set_is_read_only(cx, value);
     }
     fn sync_reading(&self, cx: &mut Cx) {
         if let Some(mut reading) = self
@@ -716,29 +529,18 @@ impl App {
         }
     }
     fn show_preferences(&mut self, cx: &mut Cx) {
-        self.preferences_draft = Some(self.preferences.clone());
         self.preferences_visible = true;
         self.ui
             .view(cx, ids!(preferences_overlay))
             .set_visible(cx, true);
+        self.set_preferences_page(cx, self.preferences_page);
         self.sync_preferences_form(cx);
-        self.ui.check_box(cx, ids!(pref_default_auto)).set_active(
-            cx,
-            self.preferences.default_auto_modify,
-            Animate::No,
-        );
-        self.ui.check_box(cx, ids!(pref_auto_save)).set_active(
-            cx,
-            self.preferences.auto_save_enabled,
-            Animate::No,
-        );
-        self.ui
-            .text_input(cx, ids!(pref_font_size))
-            .set_text(cx, &self.preferences.editor_font_size.to_string());
+        // Refresh the "current code font" line (the scan may have finished
+        // while the overlay was closed, or still be running).
+        self.apply_code_font_pref(cx);
     }
     fn hide_preferences(&mut self, cx: &mut Cx) {
         self.preferences_visible = false;
-        self.preferences_draft = None;
         self.ui
             .view(cx, ids!(preferences_overlay))
             .set_visible(cx, false);
@@ -750,8 +552,32 @@ impl App {
             self.show_preferences(cx);
         }
     }
-    /// Push the live `Preferences` into the form widgets. Called after every
-    /// draft edit so the overlay reflects authoritative values, not stale ones.
+    /// Obsidian-style left nav: one visible page, the active entry tinted.
+    fn set_preferences_page(&mut self, cx: &mut Cx, page: usize) {
+        self.preferences_page = page;
+        for (index, nav, panel) in [
+            (0, id!(pref_nav_appearance), id!(pref_page_appearance)),
+            (1, id!(pref_nav_editor), id!(pref_page_editor)),
+            (2, id!(pref_nav_agent), id!(pref_page_agent)),
+        ] {
+            let active = index == page;
+            self.ui.view(cx, &[panel]).set_visible(cx, active);
+            let mut button = self.ui.button(cx, &[nav]);
+            if active {
+                script_apply_eval!(cx, button, {
+                    draw_text: {color: #x2162c2 color_hover: #x2162c2}
+                });
+            } else {
+                script_apply_eval!(cx, button, {
+                    draw_text: {color: #x303740 color_hover: #x2162c2}
+                });
+            }
+            button.redraw(cx);
+        }
+    }
+    /// Push the live `Preferences` into the form widgets. The panel edits
+    /// `self.preferences` directly (instant apply), so the widgets simply
+    /// mirror it whenever the overlay opens or a change lands.
     fn sync_preferences_form(&self, cx: &mut Cx) {
         let config = agent::Config::probe();
         self.ui
@@ -768,50 +594,104 @@ impl App {
                 "API Key: 未配置 (AGENT_DOCS_API_KEY 或 MINIMAX_API_KEY)"
             },
         );
+        self.ui.check_box(cx, ids!(pref_default_auto)).set_active(
+            cx,
+            self.preferences.default_auto_modify,
+            Animate::No,
+        );
+        self.ui.check_box(cx, ids!(pref_auto_save)).set_active(
+            cx,
+            self.preferences.auto_save_enabled,
+            Animate::No,
+        );
+        self.ui
+            .text_input(cx, ids!(pref_font_size))
+            .set_text(cx, &self.preferences.editor_font_size.to_string());
+        self.sync_font_rows(cx);
     }
-    fn commit_preferences(&mut self, cx: &mut Cx) {
-        // Re-read text input one last time in case focus never moved out.
-        let font_size_text = self.ui.text_input(cx, ids!(pref_font_size)).text();
-        let parsed = font_size_text
-            .trim()
-            .parse::<u32>()
-            .unwrap_or(self.preferences.editor_font_size);
-        let mut draft = self.preferences_draft.clone().unwrap_or_default();
-        if !(8..=48).contains(&parsed) {
-            self.ui
-                .label(cx, ids!(preferences_status))
-                .set_text(cx, "字号必须在 8–48 之间，未保存。");
-            return;
+    /// Mirror the code-font priority list into the fixed row slots and the
+    /// add-font dropdown (installed families not already listed).
+    fn sync_font_rows(&self, cx: &mut Cx) {
+        let fonts = &self.preferences.editor_code_fonts;
+        for i in 0..FONT_ROW_SLOTS {
+            let row = self.ui.view(cx, &[font_row_id(i)]);
+            let Some(name) = fonts.get(i) else {
+                row.set_visible(cx, false);
+                continue;
+            };
+            row.set_visible(cx, true);
+            row.label(cx, ids!(font_name)).set_text(cx, name);
+            row.button(cx, ids!(font_up)).set_visible(cx, i > 0);
+            row.button(cx, ids!(font_down))
+                .set_visible(cx, i + 1 < fonts.len());
         }
-        draft.editor_font_size = parsed;
-        match preferences::save(&draft) {
-            Ok(path) => {
-                self.preferences = draft;
-                self.apply_preferences(cx);
-                self.hide_preferences(cx);
-                self.status(cx, &format!("Preferences 已保存: {}", path.display()));
-            }
-            Err(e) => {
-                self.ui
-                    .label(cx, ids!(preferences_status))
-                    .set_text(cx, &format!("保存失败: {e}"));
-            }
+        let mut labels = vec!["添加字体…".to_owned()];
+        labels.extend(
+            fonts::menu_names()
+                .into_iter()
+                .filter(|name| !fonts.contains(name)),
+        );
+        let dropdown = self.ui.drop_down(cx, ids!(pref_font_add));
+        dropdown.set_labels(cx, labels);
+        dropdown.set_selected_item(cx, 0);
+    }
+    /// Persist the current `Preferences`; failures surface in the status bar.
+    fn save_preferences(&mut self, cx: &mut Cx) {
+        match preferences::save(&self.preferences) {
+            Ok(path) => self.status(cx, &format!("Preferences 已保存: {}", path.display())),
+            Err(e) => self.status(cx, &format!("Preferences 保存失败: {e}")),
         }
     }
-    /// Apply a freshly-saved Preferences snapshot to runtime state.
+    /// Apply the whole `Preferences` snapshot to runtime state. Called at
+    /// startup and after every panel edit, so changes take effect live.
     fn apply_preferences(&mut self, cx: &mut Cx) {
-        // default_auto_modify takes effect on the next document open; we
-        // also reflect it on the current session so the change feels live.
         self.auto = self.preferences.default_auto_modify;
-        // Live editor font size re-apply is best-effort; if a TextInput is
-        // already drawn we just hint a redraw.
+        let body = self.preferences.editor_font_size as f64;
         if let Some(mut live) = self
             .ui
             .widget(cx, ids!(live_editor))
             .borrow_mut::<live_editor::LiveEditor>()
         {
-            live.update(cx, self.workbench.text());
+            live.set_body_size(cx, body);
         }
+        if let Some(mut reading) = self
+            .ui
+            .widget(cx, ids!(preview))
+            .borrow_mut::<reading::Reading>()
+        {
+            reading.set_body_size(cx, body);
+        }
+        self.apply_code_font_pref(cx);
+    }
+    /// Apply the configured code-font priority list to the theme's code
+    /// font, then force the editors to re-layout with the new face.
+    fn apply_code_font_pref(&mut self, cx: &mut Cx) {
+        let applied = fonts::apply_code_font(cx, &self.preferences.editor_code_fonts);
+        if let Some(mut live) = self
+            .ui
+            .widget(cx, ids!(live_editor))
+            .borrow_mut::<live_editor::LiveEditor>()
+        {
+            live.restyle(cx);
+        }
+        if let Some(mut reading) = self
+            .ui
+            .widget(cx, ids!(preview))
+            .borrow_mut::<reading::Reading>()
+        {
+            reading.redraw(cx);
+        }
+        if self.preferences_visible {
+            let text = match &applied {
+                Some(name) => format!("当前代码字体: {name}"),
+                None if fonts::ready() => "当前代码字体: 内置 Liberation Mono".to_owned(),
+                None => "正在扫描已安装字体…".to_owned(),
+            };
+            self.ui
+                .label(cx, ids!(pref_font_status))
+                .set_text(cx, &text);
+        }
+        cx.redraw_all();
     }
     /// Bring the active thread's paragraph into view in the current editor
     /// mode. Called from prev/next/Open so the user never needs a separate
@@ -926,7 +806,7 @@ impl App {
             .set_text(cx, &format!("评论 ({})", self.workbench.thread_count()));
         if let Some(thread) = self.thread.and_then(|id| self.workbench.thread(id)) {
             self.ui
-                .text_input(cx, ids!(quote))
+                .widget(cx, ids!(quote))
                 .set_text(cx, thread.original());
             if let Some(mut discussion) = self
                 .ui
@@ -948,7 +828,7 @@ impl App {
                 },
             );
         } else {
-            self.ui.text_input(cx, ids!(quote)).set_text(
+            self.ui.widget(cx, ids!(quote)).set_text(
                 cx,
                 self.selected
                     .as_ref()
@@ -986,6 +866,52 @@ impl App {
         self.thread = None;
         self.show_thread(cx);
         Ok(())
+    }
+    fn undo_document(&mut self, cx: &mut Cx) {
+        if self.document.is_none()
+            || self.pending_switch.is_some()
+            || self.pending_tabs.is_some()
+            || self.closing
+            || self.save_failed
+        {
+            return;
+        }
+        let cursor = self
+            .ui
+            .widget(cx, ids!(live_editor))
+            .borrow::<live_editor::LiveEditor>()
+            .filter(|e| e.focused(cx))
+            .and_then(|e| e.cursor_offset(cx));
+        match self.workbench.undo() {
+            Ok(()) => {
+                self.selected = None;
+                self.popup_selection = None;
+                self.hide_composer(cx);
+                self.sync_document(cx);
+                if let Some(cursor) = cursor {
+                    let mut offset = cursor.min(self.workbench.text().len());
+                    while !self.workbench.text().is_char_boundary(offset) {
+                        offset -= 1;
+                    }
+                    if let Some(mut live) = self
+                        .ui
+                        .widget(cx, ids!(live_editor))
+                        .borrow_mut::<live_editor::LiveEditor>()
+                    {
+                        live.activate_at(cx, offset);
+                    }
+                }
+                self.show_thread(cx);
+                self.queue_save(cx);
+                self.status(cx, "已撤销；重叠评论锚点过期，不会自动覆盖。");
+            }
+            Err(e) => self.status(cx, &e.to_string()),
+        }
+    }
+    fn stamp_message(&mut self, id: usize, author: &str) {
+        let _ = self
+            .workbench
+            .stamp_last_message(id, author, comment_meta::timestamp());
     }
     fn run_agent(&mut self, cx: &mut Cx) {
         let Some(id) = self.thread else {
@@ -1098,10 +1024,11 @@ impl App {
                 &edit.explanation,
             ) {
                 Ok(()) => {
+                    self.stamp_message(reply.request.thread, "Agent");
                     self.selected = None;
                     self.sync_document(cx);
                     self.show_thread(cx);
-                    self.status(cx, "已修改段落并回复 · 可撤销 · 自动保存");
+                    self.status(cx, "已修改选区并回复 · 可撤销 · 自动保存");
                 }
                 Err(e) => {
                     self.status(cx, &e.to_string());
@@ -1184,8 +1111,7 @@ impl App {
             script_apply_eval!(cx, tab, { draw_bg +: { color: #(color) } });
             tab.button(cx, ids!(title))
                 .set_text(cx, &self.node_name(rel));
-            tab.button(cx, ids!(close))
-                .set_visible(cx, self.tabs.len() > 1);
+            tab.button(cx, ids!(close)).set_visible(cx, true);
         }
         self.ui.redraw(cx);
     }
@@ -1301,6 +1227,18 @@ impl App {
             if let Some(n) = remap(tab) {
                 *tab = n;
             }
+        }
+        if let Some(tabs) = self.pending_tabs.as_mut() {
+            for tab in tabs {
+                if let Some(n) = remap(tab) {
+                    *tab = n;
+                }
+            }
+        }
+        if let Some(target) = self.tab_menu_target.as_mut()
+            && let Some(n) = remap(target)
+        {
+            *target = n;
         }
         self.expanded = self
             .expanded
@@ -1445,14 +1383,84 @@ impl App {
         }
     }
     fn close_tab(&mut self, cx: &mut Cx, index: usize) {
-        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+        if let Some(target) = self.tabs.get(index).cloned() {
+            self.close_tabs(cx, &target, tabs::Close::Current);
+        }
+    }
+    fn hide_tab_menu(&mut self, cx: &mut Cx) {
+        self.tab_menu_target = None;
+        if let Some(mut menu) = self
+            .ui
+            .widget(cx, ids!(tab_menu))
+            .borrow_mut::<tab_menu::TabMenu>()
+        {
+            menu.hide(cx);
+        }
+    }
+    fn close_tabs(&mut self, cx: &mut Cx, target: &str, command: tabs::Close) {
+        if self.pending_switch.is_some()
+            || self.pending_tabs.is_some()
+            || self.closing
+            || self.save_failed
+        {
             return;
         }
-        let closed = self.tabs.remove(index);
-        if self.document.as_ref().is_some_and(|d| d.rel == closed) {
-            let next = self.tabs[index.min(self.tabs.len() - 1)].clone();
-            self.open_rel(cx, &next);
+        let Some(remaining) = tabs::remaining(&self.tabs, target, command) else {
+            return;
+        };
+        if remaining == self.tabs {
+            return;
         }
+        if self
+            .document
+            .as_ref()
+            .is_some_and(|d| !remaining.contains(&d.rel))
+        {
+            self.pending_tabs = Some(remaining);
+            self.agent_queue.clear();
+            self.epoch += 1;
+            self.readonly(cx, true);
+            self.flush_save(cx);
+        } else {
+            self.apply_closed_tabs(cx, remaining);
+        }
+    }
+    fn apply_closed_tabs(&mut self, cx: &mut Cx, tabs: Vec<String>) {
+        let removed = self
+            .document
+            .as_ref()
+            .is_some_and(|d| !tabs.contains(&d.rel));
+        self.tabs = tabs;
+        if removed {
+            if let Some(next) = self.tabs.last().cloned() {
+                if let Some(library) = &self.library
+                    && let Ok(document) = library.document(&next)
+                {
+                    self.pending_switch = Some(LibraryCommand::Open(document));
+                }
+            } else {
+                self.cancel_save_timer(cx);
+                self.document = None;
+                self.workbench = document_core::Workbench::new("").expect("empty workbench");
+                self.persisted = Some(self.snapshot());
+                self.baseline = String::new();
+                self.thread = None;
+                self.selected = None;
+                self.rebind_target = None;
+                self.reply_drafts.clear();
+                self.draft_thread = None;
+                self.hide_composer(cx);
+                self.readonly(cx, false);
+                self.sync_document(cx);
+                self.show_thread(cx);
+            }
+        }
+        self.ui
+            .view(cx, ids!(article_surface))
+            .set_visible(cx, self.document.is_some());
+        self.ui
+            .view(cx, ids!(empty_workspace))
+            .set_visible(cx, self.document.is_none());
         self.draw_tabs(cx);
         self.persist_ui();
     }
@@ -1505,29 +1513,44 @@ impl App {
         });
         self.sync_status(cx);
     }
+    fn cancel_save_timer(&mut self, cx: &mut Cx) {
+        cx.stop_timer(self.save_timer);
+        self.save_timer = Timer::default();
+        self.autosave.clear();
+    }
+    /// Called only after a document mutation (or enabling auto-save).
     fn queue_save(&mut self, cx: &mut Cx) {
+        self.cancel_save_timer(cx);
         if self.document.is_none()
             || self.save_failed
+            || !self.preferences.auto_save_enabled
             || self.persisted.as_ref() == Some(&self.snapshot())
         {
             return;
         }
-        cx.stop_timer(self.save_timer);
-        self.save_timer = cx.start_timeout(0.35);
+        self.autosave.changed(std::time::Instant::now());
+        self.save_timer = cx.start_timeout(autosave::DELAY.as_secs_f64());
     }
     fn flush_save(&mut self, cx: &mut Cx) {
         if self.file_rx.is_some() || self.save_failed {
             return;
         }
-        if self.persisted.as_ref() == Some(&self.snapshot()) {
+        if self.document.is_none() || self.persisted.as_ref() == Some(&self.snapshot()) {
+            self.cancel_save_timer(cx);
+            if let Some(tabs) = self.pending_tabs.take() {
+                self.apply_closed_tabs(cx, tabs);
+            }
             if let Some(command) = self.pending_switch.take() {
                 self.launch_library(cx, command);
+            } else if self.quitting {
+                cx.quit();
             } else if self.closing {
                 self.ui.window(cx, ids!(main_window)).close(cx);
             }
             return;
         }
         if let Some(document) = self.document.clone() {
+            self.cancel_save_timer(cx);
             self.launch_library(
                 cx,
                 LibraryCommand::Save {
@@ -1565,6 +1588,7 @@ impl App {
         match reply {
             LibraryReply::Loaded(result) => match result {
                 Ok(loaded) => {
+                    self.cancel_save_timer(cx);
                     self.readonly(cx, false);
                     self.workbench = loaded.workbench;
                     self.reply_drafts.clear();
@@ -1572,6 +1596,12 @@ impl App {
                     self.ui.text_input(cx, ids!(comment_input)).set_text(cx, "");
                     let rel = loaded.document.rel.clone();
                     self.document = Some(loaded.document);
+                    self.ui
+                        .view(cx, ids!(article_surface))
+                        .set_visible(cx, true);
+                    self.ui
+                        .view(cx, ids!(empty_workspace))
+                        .set_visible(cx, false);
                     self.selected_node = Some(rel.clone());
                     let mut dir = rel.as_str();
                     while let Some((parent, _)) = dir.rsplit_once('/') {
@@ -1594,6 +1624,19 @@ impl App {
                     self.show_thread(cx);
                     self.sync_document(cx);
                     self.mode(cx, true);
+                    // A fresh (or body-empty) document invites writing: put
+                    // the caret in the trailing empty row so its placeholder
+                    // shows instead of a blank page below the title.
+                    let units = live_editor::visible_units(self.workbench.text());
+                    if units.iter().all(|unit| unit.is_empty())
+                        && let Some(last) = units.last()
+                        && let Some(mut live) = self
+                            .ui
+                            .widget(cx, ids!(live_editor))
+                            .borrow_mut::<live_editor::LiveEditor>()
+                    {
+                        live.activate_at(cx, last.start);
+                    }
                     self.refresh_documents(cx);
                     self.persist_ui();
                     self.status(
@@ -1624,19 +1667,30 @@ impl App {
                     self.ui
                         .label(cx, ids!(modified_label))
                         .set_text(cx, "刚刚修改");
-                    self.flush_save(cx);
+                    // IO completion is not an edit. A newer snapshot must
+                    // respect its own trailing-edge deadline, unless switching
+                    // or closing requires an immediate durability barrier.
+                    if self.pending_switch.is_some()
+                        || self.pending_tabs.is_some()
+                        || self.closing
+                        || self.autosave.ready(std::time::Instant::now())
+                    {
+                        self.flush_save(cx);
+                    }
                 }
                 Err(e) => {
+                    self.cancel_save_timer(cx);
                     self.save_failed = true;
                     self.closing = false;
                     self.pending_switch = None;
+                    self.pending_tabs = None;
+                    self.quitting = false;
                     self.readonly(cx, false);
                     self.status(cx, &e.to_string());
                 }
             },
         }
         self.sync_status(cx);
-        self.queue_save(cx);
     }
     /// Feishu-style ⌘+⇧+M: capture the current selection into popup_selection
     /// and open the comment composer. Mirrors the toolbar's add_comment path
@@ -1683,6 +1737,8 @@ impl App {
             self.rebind_target = self.thread;
         }
         self.selected = Some(range.clone());
+        // Comment anchor and model replacement authority are the exact
+        // selected source range, never an implicitly enlarged paragraph.
         self.thread = None;
         let quote = self.workbench.text().get(range).unwrap_or("").to_owned();
         self.composer_ask_ai = self.preferences.default_auto_modify;
@@ -1715,12 +1771,25 @@ impl App {
     /// selected range with the marker and commit through the workbench, so
     /// undo/autosave/comment anchors all follow the normal edit path.
     fn apply_format(&mut self, cx: &mut Cx, marker: &str) {
-        let Some((range, revision)) = self.popup_selection.clone() else {
+        let Some((mut range, revision)) = self.popup_selection.clone() else {
             return;
         };
         if revision != self.workbench.revision() {
             self.status(cx, "选区原文已变化，请重新选择。");
             return;
+        }
+        // Visible selection excludes syntax. Include matching adjacent
+        // delimiters for toggle-off, not another nested pair of markers.
+        if marker != "link" {
+            let close = if marker == "<u>" { "</u>" } else { marker };
+            let text = self.workbench.text();
+            if range.start >= marker.len()
+                && text.get(range.start - marker.len()..range.start) == Some(marker)
+                && text.get(range.end..range.end + close.len()) == Some(close)
+            {
+                range.start -= marker.len();
+                range.end += close.len();
+            }
         }
         let Some(selected) = self.workbench.text().get(range.clone()) else {
             return;
@@ -1857,8 +1926,14 @@ impl MatchEvent for App {
         let mut column = self.ui.view(cx, ids!(article_column));
         let width = workspace::ARTICLE_WIDTH;
         script_apply_eval!(cx, column, {max_width: #(width)});
+        #[cfg(target_os = "macos")]
+        self.ui
+            .button(cx, ids!(preferences_button))
+            .set_visible(cx, false);
         self.preferences = preferences::load();
         self.auto = self.preferences.default_auto_modify;
+        fonts::warm_scan();
+        self.apply_preferences(cx);
         self.editing = true;
         match Library::from_env() {
             Ok(library) => {
@@ -1876,28 +1951,226 @@ impl MatchEvent for App {
         }
     }
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
+        if self.ui.button(cx, ids!(toggle_navigation)).clicked(actions) {
+            let shown = self.ui.view(cx, ids!(navigation_panel)).visible();
+            let comments = !self.comments_collapsed
+                && (shown || self.window_width == 0.0 || self.window_width >= 1100.0);
+            self.set_sidebar_visibility(cx, !shown, comments);
+        }
+        if self.ui.button(cx, ids!(toggle_comments)).clicked(actions) {
+            let shown = self.ui.view(cx, ids!(comments_panel)).visible();
+            self.set_sidebar_visibility(cx, !self.navigation_collapsed, !shown);
+        }
+        for (id, command) in [
+            (ids!(tab_close), tabs::Close::Current),
+            (ids!(tab_close_left), tabs::Close::Left),
+            (ids!(tab_close_others), tabs::Close::Others),
+            (ids!(tab_close_all), tabs::Close::All),
+        ] {
+            if self.ui.button(cx, id).clicked(actions)
+                && let Some(target) = self.tab_menu_target.take()
+            {
+                self.hide_tab_menu(cx);
+                self.close_tabs(cx, &target, command);
+            }
+        }
+        if self.ui.button(cx, ids!(empty_new)).clicked(actions)
+            || (self.document.is_none() && self.ui.button(cx, ids!(new_document)).clicked(actions))
+        {
+            self.switch_document(cx, LibraryCommand::CreateNote(self.target_dir()));
+        }
+        // Preferences overlay: Obsidian-style, every control applies the
+        // moment it changes (no save/cancel step).
         if self
             .ui
-            .button(cx, ids!(collapse_navigation))
+            .button(cx, ids!(preferences_button))
             .clicked(actions)
         {
-            self.set_sidebar_visibility(cx, false, !self.comments_collapsed);
+            self.toggle_preferences(cx);
         }
-        if self.ui.button(cx, ids!(expand_navigation)).clicked(actions) {
-            let comments = !self.comments_collapsed
-                && (self.window_width == 0.0 || self.window_width >= 1100.0);
-            self.set_sidebar_visibility(cx, true, comments);
+        if self.ui.button(cx, ids!(preferences_done)).clicked(actions) {
+            self.hide_preferences(cx);
         }
-        if self.ui.button(cx, ids!(collapse_comments)).clicked(actions) {
-            self.set_sidebar_visibility(cx, !self.navigation_collapsed, false);
+        for (page, nav) in [
+            (0, ids!(pref_nav_appearance)),
+            (1, ids!(pref_nav_editor)),
+            (2, ids!(pref_nav_agent)),
+        ] {
+            if self.preferences_visible && self.ui.button(cx, nav).clicked(actions) {
+                self.set_preferences_page(cx, page);
+            }
         }
-        if self.ui.button(cx, ids!(expand_comments)).clicked(actions) {
-            self.set_sidebar_visibility(cx, !self.navigation_collapsed, true);
+        if let Some(active) = self
+            .ui
+            .check_box(cx, ids!(pref_default_auto))
+            .changed(actions)
+        {
+            self.preferences.default_auto_modify = active;
+            self.auto = active;
+            self.save_preferences(cx);
         }
-        if self.document.is_none() || self.pending_switch.is_some() || self.closing {
+        if let Some(active) = self.ui.check_box(cx, ids!(pref_auto_save)).changed(actions) {
+            self.preferences.auto_save_enabled = active;
+            self.save_preferences(cx);
+            // Both directions matter: disable cancels an existing deadline,
+            // enable starts one for the current dirty document.
+            self.queue_save(cx);
+        }
+        if self.preferences_visible
+            && let Some(changed) = self
+                .ui
+                .text_input(cx, ids!(pref_font_size))
+                .changed(actions)
+        {
+            match changed.trim().parse::<u32>() {
+                Ok(value) if (8..=48).contains(&value) => {
+                    self.preferences.editor_font_size = value;
+                    self.save_preferences(cx);
+                    self.apply_preferences(cx);
+                    self.ui.label(cx, ids!(pref_size_status)).set_text(cx, "");
+                }
+                _ => {
+                    self.ui
+                        .label(cx, ids!(pref_size_status))
+                        .set_text(cx, "字号需在 8–48 之间。");
+                }
+            }
+        }
+        // Code-font priority list: reorder, remove, add — each applied live.
+        let mut font_edit: Option<(usize, i32)> = None; // (index, -1 up, +1 down, 0 remove)
+        for i in 0..FONT_ROW_SLOTS.min(self.preferences.editor_code_fonts.len()) {
+            let row = &[font_row_id(i)];
+            if self
+                .ui
+                .button(cx, &[row[0], id!(font_remove)])
+                .clicked(actions)
+            {
+                font_edit = Some((i, 0));
+            } else if self.ui.button(cx, &[row[0], id!(font_up)]).clicked(actions) {
+                font_edit = Some((i, -1));
+            } else if self
+                .ui
+                .button(cx, &[row[0], id!(font_down)])
+                .clicked(actions)
+            {
+                font_edit = Some((i, 1));
+            }
+        }
+        let dropdown = self.ui.drop_down(cx, ids!(pref_font_add));
+        let picked: Option<String> = actions
+            .filter_widget_actions_cast::<DropDownAction>(dropdown.widget_uid())
+            .find_map(|action| match action {
+                DropDownAction::Select(index) if index > 0 => {
+                    let labels = fonts::menu_names();
+                    let listed = &self.preferences.editor_code_fonts;
+                    // The dropdown shows the same filtered list sync_font_rows
+                    // built: installed families not already in the priority list.
+                    Some(
+                        labels
+                            .into_iter()
+                            .filter(|name| !listed.contains(name))
+                            .nth(index - 1),
+                    )
+                    .flatten()
+                }
+                _ => None,
+            });
+        if let Some(name) = picked {
+            if self.preferences.editor_code_fonts.len() < FONT_ROW_SLOTS {
+                self.preferences.editor_code_fonts.push(name);
+                self.save_preferences(cx);
+                self.sync_font_rows(cx);
+                self.apply_code_font_pref(cx);
+            } else {
+                self.ui
+                    .label(cx, ids!(pref_font_status))
+                    .set_text(cx, "最多 8 个代码字体。");
+            }
+            self.ui
+                .drop_down(cx, ids!(pref_font_add))
+                .set_selected_item(cx, 0);
+        }
+        if let Some((index, op)) = font_edit {
+            {
+                let fonts = &mut self.preferences.editor_code_fonts;
+                match op {
+                    0 => {
+                        fonts.remove(index);
+                    }
+                    -1 if index > 0 => {
+                        fonts.swap(index, index - 1);
+                    }
+                    1 if index + 1 < fonts.len() => {
+                        fonts.swap(index, index + 1);
+                    }
+                    _ => {}
+                }
+            }
+            self.save_preferences(cx);
+            self.sync_font_rows(cx);
+            self.apply_code_font_pref(cx);
+        }
+        // Feishu-style big title: a single TextInput that maps to the first
+        // `# heading` line. Empty input deletes that line; non-empty input
+        // creates/replaces it. The first-line edit is local to the workbench
+        // text, so it shares the same revision/undo pipeline.
+        if self.document.is_none()
+            && (self.ui.button(cx, ids!(empty_open)).clicked(actions)
+                || self.ui.button(cx, ids!(document_search)).clicked(actions))
+        {
+            self.show_switcher(cx);
+        }
+        if self.document.is_none() {
+            let tree = self.ui.widget(cx, ids!(document_list));
+            for (id, row) in tree.portal_list(cx, ids!(list)).items_with_actions(actions) {
+                let node = tree_rows().lock().unwrap().get(id).cloned();
+                if row.button(cx, ids!(heading)).clicked(actions)
+                    && let Some(node) = node
+                {
+                    if node.is_dir {
+                        self.toggle_folder(cx, &node.rel);
+                    } else {
+                        self.open_rel(cx, &node.rel);
+                    }
+                }
+            }
+        }
+        if self.document.is_none() && self.switcher_visible {
+            if let Some(query) = self
+                .ui
+                .text_input(cx, ids!(switcher_input))
+                .changed(actions)
+            {
+                self.update_switcher(cx, &query);
+            }
+            for i in 0..SWITCH_SLOTS {
+                if self.ui.button(cx, &[switch_id(i)]).clicked(actions)
+                    && let Some(rel) = self.switcher_hits.get(i).cloned()
+                {
+                    self.hide_switcher(cx);
+                    self.open_rel(cx, &rel);
+                }
+            }
+        }
+        if self.document.is_none()
+            || self.pending_switch.is_some()
+            || self.pending_tabs.is_some()
+            || self.closing
+        {
             return;
         }
         let before = self.snapshot();
+        if self.ui.button(cx, ids!(quote_jump)).clicked(actions) {
+            if self
+                .thread
+                .and_then(|id| self.workbench.thread(id))
+                .is_some_and(|t| t.revision() == self.workbench.revision())
+            {
+                self.reveal_active_thread(cx);
+            } else {
+                self.status(cx, "原文锚点已过期，请重新绑定后定位。");
+            }
+        }
         if self.ui.button(cx, ids!(document_search)).clicked(actions) {
             self.show_switcher(cx);
         }
@@ -1930,6 +2203,15 @@ impl MatchEvent for App {
             && let live_editor::LiveAction::SelectionReady(point) = action.cast()
         {
             self.selection_popup(cx, point);
+        }
+        if let Some(action) =
+            actions.find_widget_action(self.ui.widget(cx, ids!(live_editor)).widget_uid())
+            && let live_editor::LiveAction::Rejected = action.cast()
+        {
+            self.status(
+                cx,
+                "此编辑涉及格式或表格结构边界，未修改；请在同一格式内编辑，表格暂不支持原始 | 或换行。",
+            );
         }
         if self.ui.button(cx, ids!(retry_save)).clicked(actions) {
             self.save_failed = false;
@@ -2170,6 +2452,7 @@ impl MatchEvent for App {
             };
             match result {
                 Ok(id) => {
+                    self.stamp_message(id, "你");
                     self.thread = Some(id);
                     self.filter_resolved = false;
                     self.selected = None;
@@ -2223,6 +2506,9 @@ impl MatchEvent for App {
             };
             match result {
                 Ok(()) => {
+                    if let Some(id) = self.thread {
+                        self.stamp_message(id, "你");
+                    }
                     self.ui.text_input(cx, ids!(comment_input)).set_text(cx, "");
                     self.rebind_target = None;
                     self.hide_composer(cx);
@@ -2259,62 +2545,30 @@ impl MatchEvent for App {
             self.epoch += 1;
             self.status(cx, "自动修改已停止；进行中结果将忽略。");
         }
-        if self.ui.button(cx, ids!(undo_button)).clicked(actions) {
-            match self.workbench.undo() {
-                Ok(()) => {
-                    self.selected = None;
-                    self.sync_document(cx);
-                    self.show_thread(cx);
-                    self.status(cx, "已撤销；旧评论锚点过期，不会自动覆盖。");
-                }
-                Err(e) => self.status(cx, &e.to_string()),
-            }
-        }
-        // Preferences overlay
-        if self
-            .ui
-            .button(cx, ids!(preferences_button))
-            .clicked(actions)
+        if self.ui.button(cx, ids!(undo_button)).clicked(actions)
+            || actions
+                .find_widget_action(self.ui.widget(cx, ids!(live_editor)).widget_uid())
+                .is_some_and(|a| {
+                    matches!(
+                        a.cast::<live_editor::LiveAction>(),
+                        live_editor::LiveAction::UndoRequested
+                    )
+                })
         {
-            self.toggle_preferences(cx);
+            self.undo_document(cx);
         }
-        if self
-            .ui
-            .button(cx, ids!(preferences_cancel))
-            .clicked(actions)
+        let title = self.ui.text_input(cx, ids!(title_input));
+        if actions
+            .filter_widget_actions_cast::<TextInputAction>(title.widget_uid())
+            .any(|action| {
+                matches!(
+                    action,
+                    TextInputAction::KeyFocus | TextInputAction::KeyFocusLost
+                )
+            })
         {
-            self.hide_preferences(cx);
+            self.sync_document(cx);
         }
-        if self.ui.button(cx, ids!(preferences_save)).clicked(actions) {
-            self.commit_preferences(cx);
-        }
-        if let Some(active) = self
-            .ui
-            .check_box(cx, ids!(pref_default_auto))
-            .changed(actions)
-            && let Some(draft) = self.preferences_draft.as_mut()
-        {
-            draft.default_auto_modify = active;
-        }
-        if let Some(active) = self.ui.check_box(cx, ids!(pref_auto_save)).changed(actions)
-            && let Some(draft) = self.preferences_draft.as_mut()
-        {
-            draft.auto_save_enabled = active;
-        }
-        if self.preferences_visible
-            && let Some(changed) = self
-                .ui
-                .text_input(cx, ids!(pref_font_size))
-                .changed(actions)
-            && let Ok(value) = changed.trim().parse::<u32>()
-            && let Some(draft) = self.preferences_draft.as_mut()
-        {
-            draft.editor_font_size = value;
-        }
-        // Feishu-style big title: a single TextInput that maps to the first
-        // `# heading` line. Empty input deletes that line; non-empty input
-        // creates/replaces it. The first-line edit is local to the workbench
-        // text, so it shares the same revision/undo pipeline.
         if let Some(text) = self.ui.text_input(cx, ids!(title_input)).changed(actions) {
             self.apply_title_change(cx, &text);
         }
@@ -2324,8 +2578,11 @@ impl MatchEvent for App {
         self.sync_status(cx);
     }
     fn handle_timer(&mut self, cx: &mut Cx, event: &TimerEvent) {
-        if self.save_timer.0 == event.timer_id {
+        if self.save_timer.0 != 0 && self.save_timer.0 == event.timer_id {
+            self.save_timer = Timer::default();
             self.flush_save(cx);
+            // A busy worker leaves the expired deadline intact; poll_file
+            // will flush it on completion, without restarting the clock.
         }
     }
 }
@@ -2336,13 +2593,90 @@ impl AppMain for App {
         makepad_widgets::widgets_mod(vm);
         context_menu::script_mod(vm);
         discussion::script_mod(vm);
+        comment_quote::script_mod(vm);
         thread_list::script_mod(vm);
+        tab_menu::script_mod(vm);
+        styled_input::script_mod(vm);
         markdown::script_mod(vm);
         live_editor::script_mod(vm);
         reading::script_mod(vm);
-        self::script_mod(vm)
+        ui::script_mod(vm)
     }
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::QuitRequested(quit) = event
+            && (self.file_rx.is_some()
+                || (self.document.is_some() && self.persisted.as_ref() != Some(&self.snapshot())))
+        {
+            quit.handle();
+            if self.save_failed {
+                self.status(cx, "保存失败，退出已取消；请重试保存。");
+                return;
+            }
+            self.pending_switch = None;
+            self.pending_tabs = None;
+            self.quitting = true;
+            self.closing = true;
+            self.epoch += 1;
+            self.readonly(cx, true);
+            self.flush_save(cx);
+            return;
+        }
+        if let Event::MouseDown(mouse) = event
+            && mouse.button == MouseButton::SECONDARY
+        {
+            for i in 0..self.tabs.len() {
+                if self
+                    .ui
+                    .view(cx, &[tab_id(i)])
+                    .point_hits_area(cx, mouse.abs)
+                {
+                    self.hide_tab_menu(cx);
+                    self.tab_menu_target = Some(self.tabs[i].clone());
+                    if let Some(mut menu) = self
+                        .ui
+                        .widget(cx, ids!(tab_menu))
+                        .borrow_mut::<tab_menu::TabMenu>()
+                    {
+                        menu.show(cx, mouse.abs);
+                    }
+                    self.ui
+                        .button(cx, ids!(tab_close_left))
+                        .set_enabled(cx, i > 0);
+                    self.ui
+                        .button(cx, ids!(tab_close_others))
+                        .set_enabled(cx, self.tabs.len() > 1);
+                    return;
+                }
+            }
+        }
+        if self.tab_menu_target.is_some() {
+            let inside = match event {
+                Event::MouseDown(m) => self
+                    .ui
+                    .widget(cx, ids!(tab_menu))
+                    .borrow::<tab_menu::TabMenu>()
+                    .is_some_and(|menu| menu.contains(cx, m.abs)),
+                _ => false,
+            };
+            if inside || self.tab_menu_pointer {
+                if matches!(event, Event::MouseDown(_)) {
+                    self.tab_menu_pointer = true;
+                }
+                self.ui
+                    .widget(cx, ids!(tab_menu))
+                    .handle_event(cx, event, &mut Scope::empty());
+                if matches!(event, Event::MouseUp(_)) {
+                    self.tab_menu_pointer = false;
+                }
+                return;
+            }
+            if matches!(
+                event,
+                Event::KeyDown(_) | Event::MouseDown(_) | Event::Scroll(_)
+            ) {
+                self.hide_tab_menu(cx);
+            }
+        }
         if let Event::KeyDown(key) = event
             && key.key_code == KeyCode::KeyV
             && (key.modifiers.logo || key.modifiers.control)
@@ -2447,11 +2781,46 @@ impl AppMain for App {
             self.flush_save(cx);
             return;
         }
+        if matches!(event, Event::MacosMenuCommand(command) if *command == id!(undo)) {
+            self.undo_document(cx);
+            return;
+        }
         if let Event::KeyDown(key) = event
+            && key.key_code == KeyCode::KeyZ
+            && key.modifiers.is_primary()
+            && !key.modifiers.shift
             && !key.is_repeat
-            && live_editor::preferences_key(key)
+            && !self.preferences_visible
+            && !self.switcher_visible
+            && self.dialog.is_none()
+            && !self
+                .ui
+                .text_input(cx, ids!(title_input))
+                .borrow()
+                .is_some_and(|i| i.key_focus(cx))
+            && !self
+                .ui
+                .text_input(cx, ids!(comment_input))
+                .borrow()
+                .is_some_and(|i| i.key_focus(cx))
+            && !self
+                .ui
+                .widget(cx, ids!(comment_composer))
+                .borrow::<context_menu::CommentComposer>()
+                .is_some_and(|c| c.is_open())
+            && !self
+                .ui
+                .widget(cx, ids!(live_editor))
+                .borrow::<live_editor::LiveEditor>()
+                .is_some_and(|e| e.focused(cx))
         {
-            self.toggle_preferences(cx);
+            self.undo_document(cx);
+            return;
+        }
+        if matches!(event, Event::MacosMenuCommand(command) if *command == id!(settings))
+            || matches!(event, Event::KeyDown(key) if !key.is_repeat && live_editor::preferences_key(key))
+        {
+            self.show_preferences(cx);
             return;
         }
         if let Event::KeyDown(key) = event
@@ -2464,6 +2833,14 @@ impl AppMain for App {
                 .is_some_and(|composer| composer.is_open())
         {
             self.hide_composer(cx);
+            return;
+        }
+        if let Event::KeyDown(key) = event
+            && !key.is_repeat
+            && key.key_code == KeyCode::Escape
+            && self.preferences_visible
+        {
+            self.hide_preferences(cx);
             return;
         }
         if let Event::KeyDown(key) = event
@@ -2502,12 +2879,60 @@ impl AppMain for App {
             self.layout_sidebars(cx);
         }
         self.match_event(cx, event);
+        if matches!(event, Event::LiveEdit | Event::ScriptReapply) {
+            #[cfg(target_os = "macos")]
+            self.ui
+                .button(cx, ids!(preferences_button))
+                .set_visible(cx, false);
+            // DSL reload resets declarative text/defaults, not Rust truth.
+            // Rehydrate runtime projections without Startup or IO/AI commands.
+            self.apply_preferences(cx);
+            self.sync_document(cx);
+            self.ui
+                .view(cx, ids!(article_surface))
+                .set_visible(cx, self.document.is_some());
+            self.ui
+                .view(cx, ids!(empty_workspace))
+                .set_visible(cx, self.document.is_none());
+            self.sync_status(cx);
+            self.layout_sidebars(cx);
+        }
+        if matches!(event, Event::Signal) && !self.fonts_ready && fonts::ready() {
+            self.fonts_ready = true;
+            self.apply_code_font_pref(cx);
+        }
         if matches!(event, Event::Signal) {
             self.poll_file(cx);
+            let before = self.snapshot();
             self.poll_agent(cx);
-            self.queue_save(cx);
+            if before != self.snapshot() {
+                self.queue_save(cx);
+            }
         }
         self.ui.handle_event(cx, event, &mut Scope::empty());
+        let selected = self
+            .ui
+            .widget(cx, ids!(live_editor))
+            .borrow::<live_editor::LiveEditor>()
+            .is_some_and(|live| live.document_selected());
+        if selected != self.document_selection {
+            self.document_selection = selected;
+            let title = self.ui.text_input(cx, ids!(title_input));
+            use makepad_widgets::makepad_draw::text::selection::{Cursor, Selection};
+            title.set_selection(
+                cx,
+                Selection {
+                    anchor: Cursor {
+                        index: 0,
+                        prefer_next_row: false,
+                    },
+                    cursor: Cursor {
+                        index: if selected { title.text().len() } else { 0 },
+                        prefer_next_row: false,
+                    },
+                },
+            );
+        }
         if let Event::MouseUp(mouse) = event
             && mouse.button == MouseButton::PRIMARY
         {

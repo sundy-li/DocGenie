@@ -13,15 +13,15 @@ DocGenie 是一个基于 **Makepad + Octoscript + Rust** 的独立桌面 App：�
 | 功能 | 当前实现 |
 | --- | --- |
 | 本地文档库 | 真实 Markdown 文件夹树，新建、重命名、删除，最多 6 个文档标签与 ⌘O 快速切换 |
-| Markdown 写作 | Live Preview：点击活动行编辑源码，离开后恢复渲染；独立只读阅读模式 |
+| Markdown 写作 | 原生呈现式编辑：正文隐藏 inline 标记，链接直接编辑文字，表格直接编辑单元格；独立只读阅读模式 |
 | 阅读排版 | 限宽居中正文、独立标题、作者 / 修改提示、大纲跳转、可收起侧栏与窄窗口布局 |
 | 段落评论 | 选区浮栏 / 右键 / ⌘⇧M，原文摘要、就地评论输入、多轮回复与段落高亮 |
 | 线程管理 | 线程概览、未解决 / 已解决筛选、解决 / 重开、逐线程回复草稿 |
 | Agent 完善 | MiniMax 修改当前段落并回复；迟到、过期或非法结果拒绝写入；支持停止与正文撤销 |
-| 自动保存 | 约 350 ms debounce 后台保存，切换 / 普通关闭前 flush，失败保留内存并提示重试 |
+| 自动保存 | 最后一次修改后静默 3 秒后台保存；新输入自动延后，切换 / 普通关闭前立即 flush，失败保留内存并提示重试 |
 | 图片与链接 | 本地 PNG 渲染，截图粘贴插入附件的实现；HTTP/HTTPS 链接使用系统浏览器打开 |
 
-原生界面，不使用 WebView。当前编辑器是 **Markdown Live Preview**，不是完整所见即所得富文本编辑器。
+原生界面，不使用 WebView。当前为 **Markdown 呈现式编辑**：活动正文保留样式，不切回源码；正文蓝色标题只有获得焦点时显示 `#`，顶部文档标题始终不显示前缀。尚不是支持所有 Markdown 语法和跨格式编辑的完整富文本内核。
 
 ## 快速开始
 
@@ -62,9 +62,19 @@ AGENT_DOCS_HOME="$PWD/.local-state/demo" cargo run --locked -p docgenie-desktop
 cargo run --locked -p docgenie-desktop -- --window-size=900x800
 ```
 
+### UI 开发：免重复编译调样式
+
+```sh
+./tools/dev-ui.sh
+```
+
+首次构建后保持原生窗口打开。修改 `apps/desktop/src/ui.rs` 等 `script_mod!` 内的样式 / 布局，保存文件即可在同一进程热更新；修改 Rust 逻辑才需要重启增量编译。默认使用隔离开发 vault，不修改真实文档库。字体字号和代码字体优先级也可通过 Preferences 即时修改，无需编译。
+
+能力边界、实测 watcher 与专项测试命令见 [UI 快速调试](docs/ui-development.md)。这使用当前 Octoscript 的 `--hot`，不迁移回旧 `live_design!`，也不修改 `.runtime/`。
+
 ### 两分钟体验
 
-1. 点击「新建文档」，输入标题与几段 Markdown；离开活动源码行查看实时渲染。
+1. 点击「新建文档」，输入蓝色标题与正文；点击正文直接编辑显示文字，格式标记不再露出。
 2. 选中一段文字，点击浮栏「评论」或按 **⌘⇧M**；不勾选「问 AI」即可创建本地评论。
 3. 在右栏点击线程摘要定位原文，回复评论，体验「解决 / 重开」与状态筛选。
 4. 切到「阅读」，点击大纲跳转；收起侧栏检查限宽正文。
@@ -73,12 +83,19 @@ cargo run --locked -p docgenie-desktop -- --window-size=900x800
 | 操作 | macOS 快捷键 |
 | --- | --- |
 | 快速切换文档 | ⌘O |
-| Preferences | ⌘, |
+| Settings | DocGenie → Settings… / ⌘, |
 | 为选区添加评论 | ⌘⇧M |
-| 当前行 / 全文选择 | ⌘A；连续第二次选择全文 |
+| 当前行 / 全文选择 | ⌘A；连续第二次选择全文（浅色高亮，保持块布局，不露源码） |
+| 撤销正文修改 | ⌘Z（输入、格式与 AI 修改统一文档历史） |
 | 关闭弹窗 | Esc |
 
+左右侧栏通过中间工具栏两端的固定图标开关。文档标签只显示在中栏，右键支持关闭、关闭左侧、关闭其他、关闭所有；关闭所有进入空工作台，不删除文档，待保存内容先落盘。
+
 文件树中的重命名 / 删除作用于选中节点，只在保存空闲时执行。删除没有回收站，请先备份。
+
+GUI 回归使用 debug：`just ui` 或 `python3 tools/test-ui-debug.py --test tab_actions -- --nocapture`。这个入口也绕过固定测试工具内部的 release 构建；直接外层 cargo test 为 debug 并不能保证 App 是 debug。详见 [UI 调试](docs/ui-development.md)。
+
+评论原文以灰色缩略摘要显示，点击定位原文；消息显示作者和创建时间。当前单机作者为“你” / “Agent”，历史消息缺失时间显示“时间未知”。
 
 ## 配置 MiniMax
 
@@ -103,8 +120,8 @@ unset MINIMAX_API_KEY
 
 - **默认关闭 Agent 自动修改**。本地评论不需要网络或密钥。
 - 新评论勾选「问 AI」是单条授权；Preferences 中开启「默认启用 Agent 自动修改」会使随后发送的评论 / 回复交给 Agent，也可能处理当前线程。只在接受外发时开启。
-- 外发上下文是**当前完整 Markdown 结构块与该线程**，不只是屏幕上选中的几个字；不发送其它文档，不发送图片字节。
-- 文字批注绑定完整块；列表、表格、代码围栏也作为完整块。模型输出必须通过 schema、文档 UUID、revision、round 与原文一致性检查才能应用。
+- 外发上下文是**实际选中的文字 / Markdown 源码范围与该线程**，不会自动扩大为完整段落；不发送其它文档，不发送图片字节。
+- 评论绑定精确选区，模型只能替换该范围。输出必须通过 schema、文档 UUID、revision、round 与原文一致性检查才能应用。无法安全映射的复杂语法选区会拒绝，不偷偷扩范围。
 - 恢复线程本身不产生请求；但已保存的 Preferences 默认自动修改开关会在加载时恢复，应在处理敏感材料前检查。
 - 停止只让本地忽略迟到结果，**不能撤回已经发出的请求**。模型调用可能产生费用。
 - 不记录 API key 或完整请求 / 响应。文档与评论未加密；OS 安全凭据存储尚未实现。
@@ -179,7 +196,7 @@ cargo clippy --locked -p document-core -p project-store -p docgenie-desktop --al
 cargo check --locked -p docgenie-desktop
 
 # 需要 macOS 图形会话；独立隐藏实例与临时 vault
-cargo test --locked -p docgenie-desktop --tests -- --test-threads=1
+python3 tools/test-ui-debug.py -- --nocapture
 ```
 
 `just setup`、`just run`、`just ci`、`just ui` 提供相应快捷入口。不要执行 `cargo fmt --all`：它会进入固定依赖的 workspace；格式化只针对本项目三个 package。
@@ -188,14 +205,16 @@ cargo test --locked -p docgenie-desktop --tests -- --test-threads=1
 
 ```sh
 cargo test --locked -p docgenie-desktop --bin docgenie-desktop live_minimax_paragraph_edit -- --ignored
-cargo test --locked -p docgenie-desktop --test live -- --ignored --test-threads=1
+python3 tools/test-ui-debug.py --test live -- --ignored --nocapture
 ```
 
 编译、业务状态、像素检查、人工交互与真实服务验证分别记录，见 [验证记录](docs/validation.md)。
 
 ## 已知边界与后续计划
 
-- 不支持完整富文本、任意跨块拖选、精确 inline 批注、多人协作、云同步或外部文档导入 UI。
+- 不支持完整富文本、任意跨块拖选、全部复杂语法的精确 inline 批注、多人协作、云同步或外部文档导入 UI。
+- 呈现式编辑目前支持同一格式 run 内修改、完整 inline 容器跨界替换；部分跨格式边界和解码实体的模糊修改会拒绝并提示，避免破坏 Markdown。列表的活动块尚未保留完整项目符号布局；RTL / 复杂换行与 IME 仍需专项验收。
+- 表格支持单元格文字与其 inline 样式编辑、保留列对齐，不支持增删行列或单元格输入原始 `|` / 换行。编辑模式普通点击编辑链接文字，⌘/Ctrl+单击打开；阅读模式单击打开。
 - 已有线程摘要与当前线程消息卡片；尚未做所有线程完整内联回复卡片、线程级 Agent 状态和版本历史快照。
 - 中文 IME、系统截图粘贴 / 浏览器跳转的完整人工验收、键盘无障碍、长文性能及其它 OS 仍需验证。
 - 没有签名 `.app` / 安装包、OS keychain、回收站、外部编辑冲突合并或自动附件清理。

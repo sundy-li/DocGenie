@@ -80,7 +80,7 @@ fn tree_folders_rename_tabs_switcher_and_right_tab_persist() {
 
         app.locator(heading("未命名文档")).click();
         app.locator(Selector::id("live_editor"))
-            .wait_text("# 未命名文档\n\n开始写作。\n");
+            .wait_text("# 未命名文档\n\n");
         app.locator(Selector::id("save_label"))
             .wait_text("已自动保存到本地");
         app.locator(Selector::id("delete_node")).click();
@@ -98,7 +98,7 @@ fn editing_the_title_renames_the_file() {
     support::library::run("title_renames_file", |app| {
         app.locator(Selector::id("new_document")).click();
         app.locator(Selector::id("live_editor"))
-            .wait_text("# 未命名文档\n\n开始写作。\n");
+            .wait_text("# 未命名文档\n\n");
         app.locator(Selector::id("title_input")).fill("改过的标题");
         app.locator(heading("改过的标题")).wait_visible();
         app.locator(Selector::id("title").text_exact("改过的标题"))

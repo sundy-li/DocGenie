@@ -63,7 +63,7 @@ fn duplicate_formatted_paragraph_highlight_and_cards() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap();
         assert_eq!(quote.trim(), "相同 **段落**");
@@ -141,8 +141,7 @@ fn edited_anchor_can_be_explicitly_rebound() {
         );
         support::library::right_click_editor(&app);
         app.locator(Selector::id("thread_rebind")).click();
-        app.locator(Selector::id("quote"))
-            .wait_value("人工改写内容");
+        app.locator(Selector::id("quote")).wait_text("人工改写内容");
         app.locator(Selector::id("transcript"))
             .wait_text("你\n完善");
         // Auto-focus: switching to preview reveals the rebind target.

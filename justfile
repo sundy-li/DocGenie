@@ -36,6 +36,8 @@ default: help
         '' \
         '运行:' \
         '  run           cargo run -p docgenie-desktop' \
+        '  dev-ui        原生 UI 常驻 --hot，默认隔离开发 vault' \
+        '  test-hot      独立 watcher 验收，临时改 ui.rs（不要并发）' \
         '' \
         '流水线:' \
         '  ci            fmt + clippy + test + check（无 GUI）' \
@@ -68,16 +70,23 @@ check:
     cargo check -p docgenie-desktop
 
 ui:
-    cargo test --release -p docgenie-desktop --tests -- --test-threads=1
+    python3 tools/test-ui-debug.py -- --nocapture
 
 render:
-    cargo test --release -p docgenie-desktop --test render -- --test-threads=1
+    python3 tools/test-ui-debug.py --test render -- --nocapture
 
 test-all: test ui render
 
 # —— 运行 ——
 run:
     cargo run -p docgenie-desktop
+
+dev-ui:
+    ./tools/dev-ui.sh
+
+# 临时修改 ui.rs + RAII 恢复，必须单独运行。
+test-hot:
+    python3 tools/test-ui-debug.py --test hot_reload -- --ignored --nocapture
 
 # —— 流水线 ——
 ci: fmt clippy test check

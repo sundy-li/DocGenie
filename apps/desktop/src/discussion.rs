@@ -5,7 +5,13 @@ script_mod! {
     use mod.prelude.widgets.*
     let MessageCard = SolidView{width: Fill height: Fit flow: Down padding: 14 spacing: 8
                 show_bg: true draw_bg.color: #xffffff
-                author := Label{text: "你" draw_text +: {color: #x525c6a text_style +: {font_size: 12}}}
+                View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                    SolidView{width: 24 height: 24 align: Align{x: 0.5 y: 0.5} draw_bg.color: #x7c3aed
+                        avatar := Label{text: "你" draw_text +: {color: #xffffff text_style +: {font_size: 12}}}
+                    }
+                    author := Label{text: "你" draw_text +: {color: #x303740 text_style: theme.font_bold{font_size: 13}}}
+                    message_time := Label{text: "" draw_text +: {color: #x9a9a9a text_style +: {font_size: 11}}}
+                }
                 message_body := Markdown{width: Fill height: Fit font_size: 14 font_color: #x303740 selectable: true
                     splash_block := View{width: Fill height: Fit
                         splash_view := TextInput{width: Fill height: Fit is_multiline: true is_read_only: true empty_text: ""}
@@ -79,12 +85,16 @@ impl Widget for Discussion {
                         },
                     );
                     if let Some(message) = message {
-                        row.label(cx, ids!(author)).set_text(
+                        row.label(cx, ids!(author))
+                            .set_text(cx, crate::comment_meta::author(message));
+                        row.label(cx, ids!(message_time))
+                            .set_text(cx, &crate::comment_meta::label(message));
+                        row.label(cx, ids!(avatar)).set_text(
                             cx,
                             if message.speaker == Speaker::User {
-                                "你 · 评论"
+                                "你"
                             } else {
-                                "Agent · 已修改"
+                                "AI"
                             },
                         );
                         row.markdown(cx, ids!(message_body))

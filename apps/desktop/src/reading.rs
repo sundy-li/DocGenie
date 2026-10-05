@@ -23,7 +23,7 @@ script_mod! {
         list := PortalList{width: Fill height: Fill flow: Down
             Block := ArticleBlock{}
             Highlight := ArticleBlock{
-                draw_bg +: {color: #xffe999}
+                draw_bg +: {color: #xffffff}
                 badge +: {text: "💬 查看批注" draw_text +: {color: #x95701c}}
             }
             Empty := View{width: Fill height: 1}
@@ -50,8 +50,13 @@ pub struct Reading {
     blocks: Vec<Block>,
     #[rust]
     text: String,
+    /// Editor body size from Preferences; 0.0 falls back to the default.
+    #[rust]
+    body_size: f64,
     #[rust]
     pointer: Option<DVec2>,
+    #[rust]
+    highlights: Vec<Range<usize>>,
 }
 /// Top-level Markdown blocks preserve complete list/table/fence syntax. Offset
 /// ranges come from the same parser as the native Markdown widget.
@@ -101,6 +106,11 @@ impl Reading {
         let changed = self.text != workbench.text();
         self.text = workbench.text().to_owned();
         let title = title_block(&self.text);
+        self.highlights = (0..workbench.thread_count())
+            .filter_map(|id| workbench.thread(id))
+            .filter(|t| !t.resolved() && t.revision() == workbench.revision())
+            .map(|t| t.range())
+            .collect();
         self.blocks = block_ranges(&self.text)
             .into_iter()
             .filter(|range| title.as_ref() != Some(range))
@@ -136,11 +146,28 @@ impl Reading {
                     .borrow::<Markdown>()
                     .is_some_and(|m| m.text_flow.has_selection())
                 {
-                    return self.blocks.get(*id).map(|b| b.range.clone());
+                    let range = widget.borrow::<Markdown>()?.precise_selection()?;
+                    let block = self.blocks.get(*id)?;
+                    return Some(block.range.start + range.start..block.range.start + range.end);
                 }
             }
         }
         None
+    }
+    /// Live-apply a new body size (Preferences). Rendered blocks restyle on
+    /// the next draw through `typography::apply`.
+    pub fn set_body_size(&mut self, cx: &mut Cx, size: f64) {
+        if (self.body_size - size).abs() >= 0.01 {
+            self.body_size = size;
+            self.view.redraw(cx);
+        }
+    }
+    fn body(&self) -> f32 {
+        if self.body_size > 0.0 {
+            self.body_size as f32
+        } else {
+            crate::typography::BODY
+        }
     }
     pub fn reveal(&mut self, cx: &mut Cx, range: Range<usize>) {
         if let Some(index) = self
@@ -179,7 +206,19 @@ impl Widget for Reading {
                     if let Some(block) = block {
                         let markdown = row.doc_markdown(cx, ids!(markdown));
                         if let Some(mut widget) = markdown.borrow_mut() {
-                            crate::typography::apply(&mut widget, &block.text);
+                            crate::typography::apply(&mut widget, &block.text, self.body());
+                            widget.comment_ranges = self
+                                .highlights
+                                .iter()
+                                .filter_map(|h| {
+                                    let a = h.start.max(block.range.start);
+                                    let b = h.end.min(block.range.end);
+                                    (a < b).then_some(
+                                        a.saturating_sub(block.range.start)
+                                            ..b.saturating_sub(block.range.start),
+                                    )
+                                })
+                                .collect();
                         }
                         markdown.set_text(cx, &block.text);
                         row.button(cx, ids!(badge))
@@ -192,6 +231,33 @@ impl Widget for Reading {
         DrawStep::done()
     }
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        if let Event::Scroll(scroll) = event {
+            let viewport = self.view.area().rect(cx);
+            let selected = self
+                .view
+                .portal_list(cx, ids!(list))
+                .borrow()
+                .is_some_and(|list| {
+                    list.items().values().any(|entry| {
+                        entry
+                            .widget
+                            .child_by_path(ids!(markdown))
+                            .borrow::<Markdown>()
+                            .is_some_and(|m| m.text_flow.has_selection())
+                    })
+                });
+            if selected
+                && viewport.contains(scroll.abs)
+                && crate::workspace::selection_edge_scroll(
+                    viewport.pos.y,
+                    viewport.size.y,
+                    scroll.abs.y,
+                ) == 0.0
+            {
+                scroll.handled_y.set(true);
+                return;
+            }
+        }
         if let Event::MouseDown(mouse) = event
             && mouse.button == MouseButton::PRIMARY
         {

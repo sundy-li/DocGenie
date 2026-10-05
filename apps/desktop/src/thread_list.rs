@@ -10,8 +10,9 @@ script_mod! {
             Thread := RectView{width: Fill height: Fit flow: Down padding: 8 spacing: 2
                 draw_bg +: {color: #xffffff border_radius: 6.0 border_size: 1.0 border_color: #xe7eaee}
                 thread_open := ButtonFlatter{width: Fill height: 28 align: Align{x: 0.0 y: 0.5} grab_key_focus: false
-                    draw_text +: {color: #x303740 color_hover: #x2563eb text_style +: {font_size: 12}}
+                    draw_text +: {color: #x858585 color_hover: #x2563eb text_style +: {font_size: 12}}
                 }
+                thread_meta := Label{width: Fill text: "" draw_text +: {color: #x9a9a9a text_style +: {font_size: 11}}}
                 summary := Label{width: Fill text: "" draw_text +: {color: #x687381 text_style +: {font_size: 11}}}
             }
             Empty := View{width: Fill height: 1}
@@ -24,6 +25,7 @@ struct Summary {
     quote: String,
     message: String,
     stale: bool,
+    meta: String,
 }
 fn excerpt(text: &str, limit: usize) -> String {
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -43,6 +45,13 @@ fn summaries(workbench: &Workbench, resolved: bool) -> Vec<Summary> {
                 quote: excerpt(thread.original(), 22),
                 message: excerpt(thread.messages().last().map_or("", |m| m.text.as_str()), 28),
                 stale: thread.revision() != workbench.revision(),
+                meta: thread.messages().last().map_or(String::new(), |m| {
+                    format!(
+                        "{}  {}",
+                        crate::comment_meta::author(m),
+                        crate::comment_meta::label(m)
+                    )
+                }),
             })
         })
         .collect()
@@ -70,7 +79,7 @@ impl ThreadList {
         active: Option<usize>,
     ) {
         let rows = summaries(workbench, resolved);
-        let height = (rows.len() as f64 * 84.0).clamp(84.0, 168.0);
+        let height = (rows.len() as f64 * 96.0).clamp(96.0, 192.0);
         self.view.walk.height = Size::Fixed(height);
         if self.resolved != resolved {
             self.view
@@ -103,6 +112,7 @@ impl Widget for ThreadList {
                     if let Some(summary) = self.rows.get(index) {
                         row.button(cx, ids!(thread_open))
                             .set_text(cx, &summary.quote);
+                        row.label(cx, ids!(thread_meta)).set_text(cx, &summary.meta);
                         row.label(cx, ids!(summary)).set_text(
                             cx,
                             &format!(

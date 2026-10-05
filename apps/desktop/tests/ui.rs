@@ -12,7 +12,7 @@ fn comment(app: &TestApp) {
         },
     );
     support::library::right_click_editor(app);
-    app.locator(Selector::id("quote")).wait_value("原始段落");
+    app.locator(Selector::id("quote")).wait_text("原始段落");
     app.locator(Selector::id("comment_input"))
         .fill("补充一个常用例子");
     app.locator(Selector::id("comment_send")).click();
@@ -38,10 +38,10 @@ fn local_comment_and_reply_do_not_edit_without_authorization() {
                 .assert_text("原始段落");
             // Sanity check: the only place Agent auto-modify lives now is
             // Preferences; without enabling it, the document stays intact.
-            app.locator(Selector::id("preferences_button")).click();
+            support::open_settings(&app);
             app.locator(Selector::id("preferences_overlay"))
                 .wait_visible();
-            app.locator(Selector::id("preferences_cancel")).click();
+            app.locator(Selector::id("preferences_done")).click();
             app.locator(Selector::id("preferences_overlay"))
                 .wait_hidden();
             app.locator(Selector::id("live_editor"))
@@ -103,8 +103,7 @@ fn reading_selection_supports_right_click_comment() {
             },
         );
         support::library::right_click(&app, "markdown");
-        app.locator(Selector::id("quote"))
-            .wait_value("唯一段落原文");
+        app.locator(Selector::id("quote")).wait_text("唯一段落原文");
         app.locator(Selector::id("comment_input"))
             .fill("阅读模式批注");
         app.locator(Selector::id("comment_send")).click();

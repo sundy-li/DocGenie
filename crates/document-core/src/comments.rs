@@ -18,6 +18,11 @@ pub enum Speaker {
 pub struct Message {
     pub speaker: Speaker,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Supplied by the trusted host; the core never reads a clock or identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,6 +85,32 @@ pub struct CommentRequest {
     pub messages: Vec<Message>,
 }
 impl Workbench {
+    /// Stamp a newly appended message once. No document/round/revision change
+    /// or writing authority; persisted legacy messages remain unknown.
+    pub fn stamp_last_message(
+        &mut self,
+        id: usize,
+        author: &str,
+        created_at: i64,
+    ) -> Result<(), EditError> {
+        if author.trim().is_empty() || author.len() > 128 || created_at < 0 {
+            return Err(EditError::InvalidSelection);
+        }
+        if self.state_bytes() + author.len() > crate::MAX_STATE_BYTES {
+            return Err(EditError::StateLimit);
+        }
+        let message = self
+            .threads
+            .get_mut(id)
+            .and_then(|t| t.messages.last_mut())
+            .ok_or(EditError::UnknownAnnotation)?;
+        if message.author.is_some() || message.created_at.is_some() {
+            return Err(EditError::Conflict);
+        }
+        message.author = Some(author.trim().to_owned());
+        message.created_at = Some(created_at);
+        Ok(())
+    }
     pub fn thread_count(&self) -> usize {
         self.threads.len()
     }
@@ -119,6 +150,8 @@ impl Workbench {
             messages: vec![Message {
                 speaker: Speaker::User,
                 text: text.trim().to_owned(),
+                author: None,
+                created_at: None,
             }],
             resolved: false,
             ask_ai,
@@ -144,6 +177,8 @@ impl Workbench {
         thread.messages.push(Message {
             speaker: Speaker::User,
             text: text.trim().to_owned(),
+            author: None,
+            created_at: None,
         });
         thread.round = round;
         Ok(())
@@ -299,6 +334,8 @@ impl Workbench {
         thread.messages.push(Message {
             speaker: Speaker::Agent,
             text: explanation.trim().to_owned(),
+            author: None,
+            created_at: None,
         });
         if candidate.state_bytes() > crate::MAX_STATE_BYTES {
             return Err(EditError::StateLimit);
@@ -341,6 +378,13 @@ pub(crate) fn validate_threads(
         }
         for m in &t.messages {
             check_message(&m.text)?;
+            if m.author
+                .as_ref()
+                .is_some_and(|a| a.trim().is_empty() || a.len() > 128)
+                || m.created_at.is_some_and(|t| t < 0)
+            {
+                return Err(EditError::InvalidSnapshot);
+            }
         }
     }
     Ok(())

@@ -2,6 +2,74 @@
 
 以下历史记录保留原 package 名 `agent-docs-desktop`，当前名称为 `docgenie-desktop`，可执行检查命令见 README。
 
+## 精确评论 / ⌘Z / 灰色引用 + 作者时间（本次验收）
+
+- 最终 debug 全量 35 项 App 单测 + 71 项原生 GUI 全部通过；2 项真实网络和 opt-in watcher 默认跳过。44 项 document-core / project-store 测试通过；fmt、Clippy all-targets -D warnings、git diff --check 通过。未修改 runtime、未发真实模型，隐藏实例已退出。
+- 删除两处 comment_block 扩范围：部分中文字只在 composer / thread / 持久化精确 original + range，高亮只覆盖选词；读取 source runs 而非搜索重复正文，读模式部分选择和重复格式段落整选回归通过。新增 core 精确选词 Agent 替换不动邻文 / bold URL、undo conflict、shift / resolve / reopen / rebind / restore，以及元信息限额与旧字段兼容回归。
+- quote 为 CommentQuote（语义 text 保存完整 original，不是隐藏输入代理），灰色 46 字符摘要，真实 native ellipsis 随宽度裁切。点击 quote_jump 定位有效原文，过期拒绝；comment_style 验证缩略 / 点击 / author / timestamp 保存与重启恢复，截图已审阅。旧测试 API quote.value 改 quote.text，完整持久化 original 不缩略。
+- Message 新 author / created_at optional serde fields 由 host 实时时钟注入；core 没有时间/provider 依赖，timestamp 不修改正文 revision，已 stamp 消息拒绝重写；旧消息显示时间未知。当前 User 作者“你”，非登录身份。Discussion 和线程摘要显示作者 / 本地月日时分；未实现所有线程独立回复输入与等待 AI 条。
+- 正文 ⌘Z / Ctrl+Z 全走 Workbench（活动行 / 阅读 / 失焦 / 格式 / AI）。test precise_comments 验证按键撤格式、失焦输入、连续两次撤甲/乙、local draft 不误撤正文；test agent 两轮 Mock 更新按键撤销恢复上一轮，过期请求 core 验证。成功恢复活动焦点 / UTF-8 cursor，autosave、cell undo 回归通过。title / Settings / comment/composer 原生局部 history 保留；redo 和完整 IME 专项未验证。
+- 早期全量失败包括旧断言仍期待整段引用（drag / live_preview，已改成真正部分 selection）和 remote screenshot transient；最终重跑全量通过。autosave GUI 输入间隔由 1.8s 调为 0.7s，避免 debug remote key latency 跨过首次 3s deadline；deadline 单测精确检验延期，GUI 仍检查磁盘不早存 + 最终数据。
+- ellipsis 试用错误 DSL scope 导致半渲染，已停止该测试并改为正确 internal prelude TextOverflow，placeholder 与评论样式专项及最终全量重新通过。不能把中间编译通过当该版本视觉通过。
+- 限制：阅读 image / code-widget / table gap 无法安全映射时拒绝精确评论；复杂 child 的局部黄色 band 不是所有语法验收。任意跨块拖选、统一 redo / typed-group undo 尚未完成；domain undo 当前按编辑 commit 粒度。comment block tree 与原文权威保持独立。
+
+## 三栏标签 / 原生 Settings / 选区滚动 / Debug runner（此前验收）
+
+- debug 全量 34 项 App 单测 + 66 项常规原生 GUI 全部通过，随后新增关闭保存冲突测试与 Settings 空工作台关闭回归，再跑 tab_actions 2 项 + selection_edges 1 项均通过（当前常规 GUI 总数 67）。单独 debug hot_reload 1 项通过。2 项真实网络跳过，普通全量 watcher 默认 ignored。核心 / 存储 41 项通过；fmt、Clippy all-targets -D warnings、diff whitespace 和 runner bash/Python 语法检查通过。
+- `tab_actions` 实测中心栏标签边界、右键四操作、关闭最后标签进入空工作台、关闭所有前立即写 dirty 文档、重开 / 新建、空工作台 Settings；外部编辑冲突时不关闭标签 / 不覆盖文件 / 保留内存。关闭左侧指右键目标左侧，关闭其他只留右键目标。真实原生截图已检查布局和菜单。
+- 两侧开关固定在中间 toolbar 两端，原 sidebars / workspace / 窄窗口测试适配统一 toggle 入口通过。macOS 已配置 WindowMenu 的 DocGenie → Settings… / ⌘, 并隐藏工具栏入口；GUI 检查快捷键、即时设置、重启恢复。隐藏 remote 实例不能完成系统菜单点击 / Quit 人工验收，不把它们标为视觉通过。
+- `selection_edges` 实测：中间拖选与带选区的 Scroll 事件不移动；顶部和底部 20pt 边缘分别向前 / 后滚动；MouseUp 后坐标停止变化。已有 selection_scroll / drag selection / 全选 / 字号 / 激活零位移回归通过。阅读模式中心滚轮保护已接入，尚未独立验收所有 reading edge 手势；跨块拖选仍未实现。
+- pinned makepad-test 内部 `build_release_binary` 硬编码 release 已发现。项目 `tools/test-ui-debug.py` 先编译 debug tests，再令测试 CARGO 适配过滤子 build --release；真实 toolchain cargo 避免 mbx wrapper 递归。进程及 build-stderr 确认 `target/debug/docgenie-desktop --remote` / unoptimized dev profile；不复制 release 二进制、不修改 runtime。just ui / render / test-hot 均使用新入口。初次直接 cargo test 的内部 release 启动失败，不算 debug 验收。
+- 全量发现 Mock composer HTTP 服务未读完请求体即关闭，debug 下会 reset connection；已消费 Content-Length 字节后回复，专项及最终全量通过。仅 Mock，不发送真实模型。
+- 独立隐藏实例已由测试结束关闭；未动用户运行中的 App 进程。debug watcher 临时改 ui.rs 已恢复，runtime pin 检查通过。尚未 commit / push。
+
+## 顶部标题无前缀 / 新建后正文焦点 / 逐键标题（此前验收）
+
+- 顶部 title_input 始终纯标题，不显示 `#`，保留蓝色和 Markdown H1 序列化。已移除 title_prefix；旧独立装饰实现是历史记录，非当前产品行为。
+- 复现改名后正文空白区域无法激活：标题改动 deactivates 正文，Blank 行命中仅 24px，点击正文下方 filler 不激活。修复画布内空正文命中，并处理同批失焦 / redraw / 新 UID 时序；一次 next-frame 焦点交接，不循环抢焦点，新的 MouseDown 取消 pending hand-off。
+- 新 `new_title_body` 严格流程：新建、3 次改标题与点击正文空白、输入、已有正文下再次改名、选正文替换、保存后继续输入。原生截图确认无顶部前缀且正文输入 caret 正常。
+- 正文逐键 `#` / `##` 原因是 CommonMark 会解析 marker-only 空标题，而旧 projection 只显示带空格前缀；现在完整映射 marker 与分隔空白。2 项投影回归覆盖 1–6 级、逐键 / 反向删除；GUI 检查 `# → ## → ##空格 → ## ABC`、失焦 H2 蓝色像素、重新激活 / Backspace / 保存后仍保留。
+- 最终 locked 全量：32 项 App 单测 + 64 项常规原生集成测试通过；2 项真实网络和 1 项 opt-in watcher 测试默认跳过。41 项核心 / 存储通过，fmt / Clippy all-targets -D warnings / git diff --check 通过；未修改 runtime 或调用真实模型，独立实例已退出。
+- 自动保存回归旧 helper ArrowLeft 在当前 standalone remote key route 报 requested input frame could not be submitted，改 Home + End 建立相同 native undo group，不绕过输入语义；最终全量包含所有 autosave 回归通过。
+
+## 字体接续 / 原布局全选 / 热更新（此前验收）
+
+- 30 项 App 单测、63 项常规原生集成测试全部通过；2 项真实网络测试跳过。另单独执行 1 项 ignored 真实文件 watcher 测试通过，总原生 GUI 64 项。document-core / project-store 41 项通过。
+- fmt、locked Clippy all-targets -D warnings、cargo check、git diff --check 与 dev-ui.sh bash 语法检查通过；未修改 `.runtime/`、未发送真实模型请求。隐藏实例由 makepad-test 退出。
+- 恢复遗留 BISECT 中的启动字体扫描和 Preferences 应用；已安装字体链 / 设置页切换即时生效回归通过；新增预存 20pt → 即时 28pt → 重启恢复、不可解析字体回退、渲染 / 活动 / 阅读字号实际重排且 revision 不变测试。
+- 第二次 Ctrl/⌘A 不合并输入、不重排：保留首个标题、正文、活动行、列表、表格网格。严格验证前后 block x/y/width/height 不变、revision 不变；每个 rendered block（包括列表）都有浅色像素、字形仍可见。截图已检查标题单次呈现、marker 和表格 cell 高亮。全篇替换与 Delete / Backspace 清空、domain undo、完整原文评论均通过；系统 copy/cut 因 standalone remote 不支持 TextCopy/TextCut forward，只检查实现，不宣称 GUI 剪贴板验收。
+- 工作台 DSL 拆到 `src/ui.rs`：旧 main.rs watcher 运行时 block 数与文件提取数不一致已避开。`--hot` 真实观察器同进程热改文案再恢复，通过 UI watcher + LiveEdit；文档和 revision 保留。该 opt-in 测试临时改 ui.rs，RAII 恢复；未与编译 / 另一 Agent 并发。错误脚本恢复和所有控件状态热重载未全面验收。
+- 自动保存接续验证：最后输入后 3 秒、输入重置 deadline、普通非修改动作不延后、切换立即 flush；Preferences 禁用取消已存在 timer，重新启用为 dirty 文档新计时。连续空格保存 / undo / 重新激活仍保留。
+- 初次全量三处失败已定位：旧测试还期待活动蓝底；空字符串在 remote snapshot 不提供 text 字段，改验证 revision + 空正文；长文滚动测试误选 PortalList 的隐藏缓存行，改筛 visible 及完整高度。最终重跑全部通过，未只重跑部分后宣称全量通过。
+- 未完成：任意跨块拖选、完整共享 native undo、系统 IME 专项、复杂结构所有边界的视觉验收。图片保持布局但没有文本 band；复制完整文档输出 Markdown，不是 rich clipboard。
+
+## 激活行零位移修复
+
+- 复现旧行为：普通正文 / 标题 active input y +3、后续段落 y +6；列表还因 item 行盒不同产生高度变化。根因包括 form-field margin 与 TextFlow / styled 输入行距差异，不使用模板 padding 补偿。
+- Rust `set_document_layout` 去除 form-field margin，inner inset 统一；styled_layout normal metrics 对齐 `align_row_height`，wrap baseline 使用 TextFlow row-height + ascender spacing；紧凑列表保留 marker、indent、item inset 与 pitch。原 Octoscript wrapper 保持不变，未修改 runtime。
+- 新 `activation_layout` 5 项均通过：正文 / 标题 / 有序与无序列表、inline 样式、长正文、长列表、混合样式换行。每项 3 轮激活 / 失焦，严格验证控件坐标 / 宽高与后续段落 y 不变，文字垂直像素范围不变，revision 不变。标题显式显示 `#`，其左侧抗锯齿边界允许 1 device pixel 差异。查看真实原生截图确认列表 marker 和缩进保持。
+- `cargo test --locked -p docgenie-desktop --tests --no-fail-fast -- --test-threads=1 --nocapture`：23 项 App 单测、55 项原生集成测试通过，2 项真实网络测试跳过。随后补充 revision 断言 / 修正 single code run 风格，重跑 activation_layout / presentation / selection_scroll / typing_repro 共 12 项通过。
+- 核心 / 存储 41 项通过；fmt、all-targets Clippy（`-D warnings`）、cargo check、diff --check 通过。自己的 GUI 实例已退出；没有触发模型请求，没有记录用户正文。回归日志未发现 script 求值失败，不能据此承诺消除所有 Makepad 引擎问题。
+- 本轮验证范围不包含 nested / loose lists、复杂 blockquote / code fences / 图片行激活、超长标题换行与 RTL；这些结构的完整零位移仍需专项覆盖，不宣称所有 Markdown 块已验收。
+
+## 标题连续输入前缀修复
+
+- 根因：聚焦时把 `# ` 注入 title_input buffer，`set_text` 保留旧索引并清空 history；连续输入 / 保存同步导致前缀错位并混入用户标题。
+- 修复：蓝色 `title_prefix` 为独立 Label，仅编辑标题聚焦可见，输入 buffer 不含合成前缀；仅边缘空白差异不重写聚焦输入。清空 / 重输标题复用原空行，避免累积正文分隔换行。
+- `tests/title_input.rs`：逐字输入 f、等待自动保存、再输入 f，中文 / 中间插入、native undo、失焦重聚焦、尾随空格后继续输入与实际磁盘 Markdown 检查均通过。查看原生截图确认前缀只显示一次，不混入标题文字。
+- `presentation` 4 项、`title_input` 1 项、`vault` 2 项原生 GUI 回归通过；核心 / 存储 41 项通过；fmt、all-targets Clippy 与 cargo check 通过。GUI 实例均退出，本修复未调用模型或修改 runtime。本次未重跑完整 App GUI suite，上次全量结果见下节。
+
+## 原生呈现式编辑增量：最终验证
+
+- runtime pin 校验通过，`.runtime/` 未修改；App-owned StyledInput 派生声明已补充。
+- `cargo fmt -p document-core -p project-store -p docgenie-desktop -- --check`、`cargo check --locked -p docgenie-desktop` 与 all-targets Clippy（`-D warnings`）通过。
+- `cargo test -p document-core -p project-store`：41 项通过。`cargo test --locked -p docgenie-desktop --tests --no-fail-fast -- --test-threads=1 --nocapture`：22 项 App 单测（含 6 项 projection 回归）+ 44 项原生集成测试通过；2 项真实网络测试跳过。
+- `presentation.rs` 实测：正文获焦点不露 inline 标记 / URL，输入保留粗体和链接 source、native undo；蓝色标题像素与焦点 `#`；独立 title_input 获焦点前缀 / 失焦隐藏；直接点击链接修改 label 不改变 URL，评论绑定完整 Markdown 块；网格单元格修改 / undo 保留 pipes、列对齐与邻格。
+- 更新旧 Live Preview / selection 测试，使用 StyledInput 实际 text 而非 runtime 仅识别原 TextInput 的 value 字段。旧源码显示断言改为呈现文本；评论 quote 断言使用完整 parser block，格式按钮继续精确范围。GUI 覆盖 caret blink、拖选、unicode 换行、格式 toggle、保存恢复、文件树 / 标题改名、Mock Agent 和评论冲突 / 重绑。
+- 已查看合成文档的真实原生截图：标题蓝色、正文与蓝色链接在活动行保持显示、表格保持网格。期间一次注册顺序错误导致测试实例无法连接，已修复并退出自己启动的实例，后续全量正常通过。
+- 清除未提交的 `/tmp/titleprobe.log` 探针（不再将正文记录到日志），保留标题在异步保存 / 切换期间只读修复。本轮不调用真实 API、不向外部模型服务发送用户素材；GUI 验证只使用合成测试文档。
+- 未验收：任意部分跨格式替换、精确 inline 评论、任意跨块鼠标选区 / 共享撤销、增删表格行列、列表活动块的完整项目符号布局、RTL / 长文性能 / 完整中文 IME、系统截图粘贴的人工流程。部分跨界编辑与模糊解码实体会明确拒绝而非损坏 Markdown；不是完整富文本编辑器。
+
 ## DocGenie 发布准备
 
 - 应用窗口、导航品牌、桌面 package / binary 与运行入口统一为 DocGenie / `docgenie-desktop`；旧 vault、Preferences、侧车锁与 `AGENT_DOCS_*` 兼容保留。
@@ -129,7 +197,7 @@ cargo test --release -p agent-docs-desktop --test live -- --ignored --test-threa
 
 ## 两阶段全选 / 浮动批注 / 字号调整
 
-- 编辑与源码模式：Ctrl+A 和 Cmd+A 首次选当前源码行，连续第二次选全文；Live Preview 使用真实全文 TextInput 选区，可替换并自动保存。鼠标/其它按键重置首选状态，repeat 不升级。
+- 历史：首次使用源码行 + 全文 TextInput 的两阶段全选；现已移除源码模式与全文聚合输入，当前行为见本次接续验收。鼠标 / 其它按键重置首选状态，repeat 不升级。
 - 选中后自动显示「添加批注」overlay；鼠标拖选和快捷键均测试，无需右键。按钮 grab_key_focus=false，click 后显式聚焦评论，绑定范围和 revision；防止同一 MouseUp 再弹出。旧右键/显式重绑测试通过。
 - 正文 14 pt，H1–H6 28/22/18/16/14/14。typography.rs 统一层级，原生布局测试确认标题递减且阅读/Live Preview 高度一致，截图已审阅。
 - 新增 selection 3 项、typography 1 项，连同所有已有原生流程最终 21 项通过；Clippy/格式/whitespace 检查通过。App 字号单元测试通过，真实网络本轮未调用。
@@ -147,4 +215,4 @@ cargo test --release -p agent-docs-desktop --test live -- --ignored --test-threa
 
 最新相关 13 项原生测试（drag 4 + selection 3 + live_preview 2 + ui 4）通过，all-targets Clippy 通过。其他 12 项原生回归在本轮此前通过；同时有 Preferences 代码更新，先前一次旧 agent_run UI 检查失败，最终 ui 重跑全部通过。没有修改/回退这些外部更新或使用用户真文档测试。
 
-限制：此修复支持单源码单元内拖选，单段自动换行可选择多条视觉行；跨不同源码行/段落的拖选仍未支持，需要全文源码模式。修复不扩大模型权限或改变正文存储。
+限制：此修复支持单呈现单元内拖选，单段自动换行可选择多条视觉行；跨不同源码行 / 段落的任意拖选仍未支持。两阶段全选使用独立共享完整源码 range，不提供全文源码模式。修复不扩大模型权限或改变正文存储。

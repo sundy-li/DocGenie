@@ -1,6 +1,19 @@
 use makepad_test::{Selector, TestApp};
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+pub fn open_settings(app: &TestApp) {
+    app.press_key_with_modifiers(
+        makepad_test::KeyCode::Comma,
+        makepad_test::KeyModifiers {
+            logo: true,
+            ..Default::default()
+        },
+    );
+    app.locator(Selector::id("preferences_overlay"))
+        .wait_visible();
+}
+
 /// Poll rendered ink, not just widget state: font resources/rasterization are
 /// asynchronous. A flat grey screenshot or empty label cannot satisfy this.
 pub fn wait_for_ink(app: &TestApp, id: &str) -> std::path::PathBuf {

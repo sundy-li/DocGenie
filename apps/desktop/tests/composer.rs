@@ -97,6 +97,22 @@ fn inline_composer_ask_ai_triggers_agent_without_global_default() {
             }
         };
         assert!(header_end > 0, "agent request headers");
+        let length = String::from_utf8_lossy(&bytes[..header_end])
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        // Consume the complete request before closing the socket; unread body
+        // bytes can reset the connection under the slower debug App.
+        while bytes.len() < header_end + length {
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0, "complete mock request body");
+            bytes.extend_from_slice(&chunk[..count]);
+        }
         let edit =
             serde_json::json!({"replacement": "AI 改写后的段落", "explanation": "已按评论改写"});
         let body =

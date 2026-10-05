@@ -83,7 +83,7 @@ fn active_row_wrap_drag_tracks_pointer() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap()
             .to_string();

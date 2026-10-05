@@ -19,27 +19,72 @@ fn first_selects_line_second_selects_document_and_replace_autosaves() {
         let text = "# 标题\n\n第一行\n第二行\n";
         support::library::fill_document(&app, text);
         app.locator(Selector::id("rendered").nth(0)).click();
-        app.locator(Selector::id("active_line"))
-            .wait_value("第一行");
+        app.locator(Selector::id("active_line")).wait_text("第一行");
         select(&app, false);
         app.locator(Selector::id("add_comment")).wait_visible();
         println!("selection toolbar: {}", app.screenshot().display());
         select(&app, false);
-        app.locator(Selector::id("active_line")).wait_value(text);
+        app.locator(Selector::id("active_line")).wait_text("第一行");
         app.locator(Selector::id("add_comment"))
             .wait_visible()
             .click();
-        app.locator(Selector::id("quote")).wait_value(text);
+        app.locator(Selector::id("quote")).wait_text(text);
         // Full native selection, not just a highlighted UI approximation.
         app.locator(Selector::id("rendered").nth(0)).click();
         select(&app, true);
         select(&app, true);
-        app.locator(Selector::id("active_line")).wait_value(text);
+        app.locator(Selector::id("active_line")).wait_text("第一行");
         app.type_text("# 替换全文\n\n新正文");
         app.locator(Selector::id("live_editor"))
             .wait_text("# 替换全文\n\n新正文");
         app.locator(Selector::id("save_label"))
             .wait_text("已自动保存到本地");
+    });
+}
+#[test]
+fn full_selection_delete_and_undo_use_entire_markdown_document() {
+    support::library::run("shared_selection_cut", |app| {
+        let source = "# 标题\n\n**第一行**\n\n第二行 [链接](https://example.com)";
+        support::library::fill_document(&app, source);
+        app.locator(Selector::id("comment_input")).click();
+        app.locator(Selector::id("rendered").nth(0)).click();
+        select(&app, true);
+        select(&app, true);
+        app.press_key(KeyCode::Delete);
+        app.locator(Selector::id("title_input")).wait_value("");
+        app.locator(Selector::id("revision_label"))
+            .wait_text("Revision 2");
+        assert!(
+            app.widget_snapshot()
+                .iter()
+                .find(|w| w.id == "live_editor")
+                .unwrap()
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        );
+        app.locator(Selector::id("undo_button")).click();
+        app.locator(Selector::id("live_editor")).wait_text(source);
+        app.locator(Selector::id("rendered").nth(0)).click();
+        select(&app, true);
+        select(&app, true);
+        app.press_key(KeyCode::Backspace);
+        app.locator(Selector::id("title_input")).wait_value("");
+        app.locator(Selector::id("revision_label"))
+            .wait_text("Revision 4");
+        assert!(
+            app.widget_snapshot()
+                .iter()
+                .find(|w| w.id == "live_editor")
+                .unwrap()
+                .text
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        );
+        app.locator(Selector::id("undo_button")).click();
+        app.locator(Selector::id("live_editor")).wait_text(source);
     });
 }
 #[test]
@@ -60,7 +105,7 @@ fn source_two_stage_select_and_first_press_replaces_only_current_line() {
             .wait_visible()
             .click();
         app.locator(Selector::id("quote"))
-            .wait_value("前行\n当前行\n后行");
+            .wait_text("前行\n当前行\n后行");
         app.locator(Selector::id("rendered").nth(0)).click();
         select(&app, true);
         app.type_text("替换行");

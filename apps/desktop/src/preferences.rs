@@ -28,6 +28,11 @@ pub struct Preferences {
     pub editor_font_size: u32,
     #[serde(default = "default_auto_save")]
     pub auto_save_enabled: bool,
+    /// Ordered priority list of installed font family names for the editor's
+    /// code font: the first family that resolves to a loadable face wins.
+    /// An empty list (or one where nothing resolves) keeps the bundled font.
+    #[serde(default = "default_code_fonts")]
+    pub editor_code_fonts: Vec<String>,
 }
 
 impl Default for Preferences {
@@ -36,6 +41,7 @@ impl Default for Preferences {
             default_auto_modify: default_auto_modify(),
             editor_font_size: default_font_size(),
             auto_save_enabled: default_auto_save(),
+            editor_code_fonts: default_code_fonts(),
         }
     }
 }
@@ -48,6 +54,15 @@ const fn default_font_size() -> u32 {
 }
 const fn default_auto_save() -> bool {
     true
+}
+/// Matches the reference code-font chain: a real monospace face first, then
+/// platform fallbacks. Families that are not installed are skipped at apply
+/// time, so listing fonts the host lacks is safe.
+fn default_code_fonts() -> Vec<String> {
+    ["Source Code Pro", "Bangla Sangam MN", "Andale Mono"]
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
 }
 
 /// Resolves the on-disk path. `AGENT_DOCS_HOME` wins (used by the test harness
@@ -160,6 +175,7 @@ mod tests {
             assert!(!prefs.default_auto_modify);
             assert_eq!(prefs.editor_font_size, 14);
             assert!(prefs.auto_save_enabled);
+            assert_eq!(prefs.editor_code_fonts, default_code_fonts());
         });
     }
 
@@ -171,6 +187,7 @@ mod tests {
                 default_auto_modify: true,
                 editor_font_size: 18,
                 auto_save_enabled: false,
+                editor_code_fonts: vec!["Menlo".to_owned()],
             };
             let path = save(&saved).unwrap();
             assert!(path.ends_with("preferences.json"));
@@ -210,6 +227,26 @@ mod tests {
     }
 
     #[test]
+    fn file_without_code_fonts_loads_with_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_scratch_home("compat", |_| {
+            let path = preferences_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                &path,
+                br#"{"default_auto_modify": true, "editor_font_size": 16,
+                     "auto_save_enabled": false}"#,
+            )
+            .unwrap();
+            let loaded = load();
+            assert!(loaded.default_auto_modify);
+            assert_eq!(loaded.editor_font_size, 16);
+            assert!(!loaded.auto_save_enabled);
+            assert_eq!(loaded.editor_code_fonts, default_code_fonts());
+        });
+    }
+
+    #[test]
     fn save_is_atomic_via_rename() {
         let _guard = ENV_LOCK.lock().unwrap();
         with_scratch_home("atomic", |_| {
@@ -217,6 +254,7 @@ mod tests {
                 default_auto_modify: false,
                 editor_font_size: 20,
                 auto_save_enabled: true,
+                editor_code_fonts: default_code_fonts(),
             };
             save(&saved).unwrap();
             let target = preferences_path();

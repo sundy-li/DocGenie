@@ -15,7 +15,7 @@
 
 - 左侧真实文件树，主新建入口与 ⌘O 文档跳转；顶部保留最多 6 个文档标签。
 - 正文最大 760 Makepad 逻辑点，居中排版，标题 28pt；作者与修改提示同一行，revision 降到页脚。
-- 编辑 / 阅读两种模式，保持 Markdown Live Preview：活动单元展示源码，其余单元渲染。
+- 编辑 / 阅读两种模式，Markdown 是正文真值：活动单元使用样式投影直接编辑，正文不展示源码；蓝色标题仅获得焦点时显示 `#`，表格保持单元格输入。当前还不是完整富文本内核。
 - 右侧大纲 / 评论文字页签；阅读模式大纲跳转不强制切换到编辑模式。
 - 评论提供线程摘要、未解决 / 已解决筛选、解决 / 重开、当前线程消息与独立回复草稿。
 - 原生选区浮栏与就地评论弹窗已经存在；空白提交禁用，提交是否外发由明确授权决定。
@@ -36,7 +36,7 @@
 | `thread_list.rs` | 从 Workbench 派生只读线程摘要 |
 | `discussion.rs` | 当前线程消息卡片 |
 | `context_menu.rs` | 选区浮栏与就地评论输入 |
-| `live_editor.rs` | 原生 Markdown 编辑与选区 |
+| `live_editor.rs` / `edit_projection.rs` / `styled_input.rs` / `styled_layout.rs` | 呈现式编辑、显示与源码映射、原生选区与样式布局 |
 | `reading.rs` / `markdown.rs` / `typography.rs` | 块级阅读、媒体与统一排版 |
 
 核心锚点语义改动需同步 `document-core` 回归；新增持久历史需单独设计 `project-store` 存储。
@@ -67,7 +67,9 @@
 
 ### P4：原生编辑器专项
 
-先用原型验证连续 source selection、跨单元鼠标 / Shift 扩展、source ↔ rendered range、caret / IME / 撤销、滚动锚点与长文虚拟化，再决定 LiveEditor 重构范围。
+首个增量已落地：parser offset runs 投影、App-owned styled native input、蓝色标题焦点前缀、表格单元格输入，保留受限 Rust 提交通路。复杂跨格式编辑采用保守拒绝而不是丢格式；未实现范围见 implementation.md。
+
+后续继续验证连续 source selection、跨单元鼠标 / Shift 扩展、source ↔ rendered range、caret / IME / 撤销、滚动锚点与长文虚拟化，再决定 LiveEditor 重构范围。
 
 精确文字批注与整块 replacement 应分开建模。回归覆盖重复文字、格式标记、跨块、重叠线程和迟到结果拒绝。保持 Markdown 真值，不引入 WebView 编辑器。
 

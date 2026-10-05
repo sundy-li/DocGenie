@@ -207,7 +207,13 @@ impl Workbench {
             + self
                 .threads
                 .iter()
-                .map(|t| t.original.len() + t.messages.iter().map(|m| m.text.len()).sum::<usize>())
+                .map(|t| {
+                    t.original.len()
+                        + t.messages
+                            .iter()
+                            .map(|m| m.text.len() + m.author.as_ref().map_or(0, String::len))
+                            .sum::<usize>()
+                })
                 .sum::<usize>()
     }
 

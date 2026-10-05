@@ -63,9 +63,9 @@ pub fn right_click(app: &TestApp, target: &str) {
     if app
         .widget_snapshot()
         .iter()
-        .any(|w| w.id == "expand_comments" && w.visible)
+        .any(|w| w.id == "comments_panel" && !w.visible)
     {
-        app.locator(Selector::id("expand_comments")).click();
+        app.locator(Selector::id("toggle_comments")).click();
     }
     app.locator(Selector::id("tab_comments")).click();
 }
@@ -73,9 +73,37 @@ pub fn right_click(app: &TestApp, target: &str) {
 /// Document editing now uses two-stage select-all; filling a complete file must
 /// press twice, unlike comment fields and single-line inputs.
 pub fn fill_document(app: &TestApp, text: impl AsRef<str>) -> makepad_test::Locator {
-    app.locator(Selector::id("rendered").nth(0))
-        .wait_visible()
-        .click();
+    let widgets = app.widget_snapshot();
+    if widgets.iter().any(|w| w.id == "rendered" && w.visible) {
+        app.locator(Selector::id("rendered").nth(0))
+            .wait_visible()
+            .click();
+    } else {
+        // A fresh empty document renders a blank row with no `rendered`
+        // widget; press inside the editor area to activate the row.
+        let editor = widgets.iter().find(|w| w.id == "live_editor").unwrap();
+        let x = editor.x as f64 + 24.0;
+        let y = editor.y as f64 + 12.0;
+        app.forward(vec![
+            StudioToApp::MouseDown(RemoteMouseDown {
+                button_raw_bits: MouseButton::PRIMARY.bits(),
+                x,
+                y,
+                time: 0.0,
+                modifiers: Default::default(),
+            }),
+            StudioToApp::MouseUp(RemoteMouseUp {
+                button_raw_bits: MouseButton::PRIMARY.bits(),
+                x,
+                y,
+                time: 0.1,
+                modifiers: Default::default(),
+            }),
+        ]);
+    }
+    // Wait for the activation draw to land focus in the row before the
+    // select-all keys; typing ahead of it races the focus hand-off.
+    app.locator(Selector::id("active_line")).wait_visible();
     let modifiers = makepad_test::KeyModifiers {
         logo: true,
         ..Default::default()

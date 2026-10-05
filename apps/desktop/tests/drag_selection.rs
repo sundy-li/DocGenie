@@ -58,7 +58,7 @@ fn first_drag_on_rendered_line_preserves_selection() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap();
         assert!(!quote.is_empty());
@@ -87,7 +87,7 @@ fn fast_reverse_drag_on_rendered_line_preserves_selection() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap();
         assert!(!quote.is_empty());
@@ -139,9 +139,10 @@ fn wrapped_unicode_paragraph_drag_preserves_neighbors() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap();
+        // A wrapped partial drag stays precise; no implicit block expansion.
         assert!(!quote.is_empty() && quote.len() < paragraph.len());
         assert!(paragraph.contains(quote));
         app.locator(Selector::id("live_editor")).assert_text(&full);
@@ -233,7 +234,7 @@ fn double_click_drag_extends_across_wrapped_lines() {
             .iter()
             .find(|w| w.id == "quote")
             .unwrap()
-            .value
+            .text
             .as_deref()
             .unwrap()
             .to_string();

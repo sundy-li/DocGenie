@@ -3,7 +3,7 @@ use makepad_test::{KeyCode, KeyModifiers, Selector};
 use std::time::{Duration, Instant};
 
 #[test]
-fn active_line_source_other_lines_markdown_and_blur() {
+fn active_line_is_styled_other_lines_render_and_blur() {
     support::library::run("live_preview", |app| {
         support::library::fill_document(&app, "# 标题\n\n正文 **粗体**\n下一行\n");
         app.locator(Selector::id("rendered").nth(0))
@@ -11,18 +11,17 @@ fn active_line_source_other_lines_markdown_and_blur() {
             .click();
         app.locator(Selector::id("active_line"))
             .wait_visible()
-            .wait_value("正文 **粗体**");
+            .wait_text("正文 粗体");
         app.locator(Selector::id("title_input")).wait_value("标题");
         app.press_key(KeyCode::End);
         app.type_text("新");
         app.locator(Selector::id("live_editor"))
-            .wait_text("# 标题\n\n正文 **粗体**新\n下一行\n");
+            .wait_text("# 标题\n\n正文 **粗体新**\n下一行\n");
         app.press_key(KeyCode::ArrowDown);
-        app.locator(Selector::id("active_line"))
-            .wait_value("下一行");
+        app.locator(Selector::id("active_line")).wait_text("下一行");
         app.press_key(KeyCode::ArrowUp);
         app.locator(Selector::id("active_line"))
-            .wait_value("正文 **粗体**新");
+            .wait_text("正文 粗体新");
         let widgets = app.widget_snapshot();
         assert!(
             widgets
@@ -39,7 +38,7 @@ fn active_line_source_other_lines_markdown_and_blur() {
         app.locator(Selector::id("mode_edit")).click();
         app.locator(Selector::id("live_panel")).wait_hidden();
         app.locator(Selector::id("preview"))
-            .wait_text("# 标题\n\n正文 **粗体**新\n下一行\n");
+            .wait_text("# 标题\n\n正文 **粗体新**\n下一行\n");
         app.locator(Selector::id("save_label"))
             .wait_text("已自动保存到本地");
         println!("live-preview UI: {}", app.screenshot().display());
@@ -53,12 +52,20 @@ fn newline_navigation_caret_blinks_and_comment_targets_source() {
         app.locator(Selector::id("rendered").nth(0)).click();
         app.locator(Selector::id("active_line"))
             .wait_visible()
-            .fill("修改第一行");
+            .click();
+        app.press_key_with_modifiers(
+            KeyCode::KeyA,
+            KeyModifiers {
+                logo: true,
+                ..Default::default()
+            },
+        );
+        app.type_text("修改第一行");
         app.press_key(KeyCode::End);
         app.press_key(KeyCode::ReturnKey);
         app.locator(Selector::id("live_editor"))
             .wait_text("修改第一行\n\n第二行\n");
-        app.locator(Selector::id("active_line")).wait_value("");
+        app.locator(Selector::id("active_line")).wait_visible();
         app.type_text("新行");
         app.locator(Selector::id("live_editor"))
             .wait_text("修改第一行\n新行\n第二行\n");
@@ -70,7 +77,7 @@ fn newline_navigation_caret_blinks_and_comment_targets_source() {
             },
         );
         support::library::right_click(&app, "active_line");
-        app.locator(Selector::id("quote")).wait_value("新行");
+        app.locator(Selector::id("quote")).wait_text("新行");
         app.locator(Selector::id("comment_input"))
             .fill("这行的批注");
         app.locator(Selector::id("comment_send")).click();

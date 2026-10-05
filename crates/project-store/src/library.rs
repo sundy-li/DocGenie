@@ -384,7 +384,7 @@ impl Library {
         let path = Self::unique(&parent, name, ".md");
         let rel = self.rel_of(&path)?;
         let text = format!(
-            "# {}\n\n开始写作。\n",
+            "# {}\n\n",
             &rel[rel.rfind('/').map_or(0, |i| i + 1)..rel.len() - 3]
         );
         let document = self.document_at(rel, path, &text);
@@ -559,8 +559,8 @@ impl Library {
             path: self.root.join(format!("{id}.md")),
             rel: format!("{id}.md"),
         };
-        let workbench = Workbench::new("# 未命名文档\n\n开始写作。\n")
-            .map_err(|_| StoreError::InvalidProject)?;
+        let workbench =
+            Workbench::new("# 未命名文档\n\n").map_err(|_| StoreError::InvalidProject)?;
         self.save(&document, &workbench.snapshot(), None)?;
         let baseline = workbench.text().to_owned();
         Ok(Loaded {

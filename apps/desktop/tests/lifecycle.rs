@@ -95,9 +95,10 @@ fn prepare(app: &makepad_test::TestApp) {
     app.locator(Selector::id("comment_input")).fill("改善原文");
     // Enable Agent auto-modify via Preferences before sending the comment
     // so the very first send triggers a request the mock server can observe.
-    app.locator(Selector::id("preferences_button")).click();
+    support::open_settings(app);
+    app.locator(Selector::id("pref_nav_agent")).click();
     app.locator(Selector::id("pref_default_auto")).click();
-    app.locator(Selector::id("preferences_save")).click();
+    app.locator(Selector::id("preferences_done")).click();
     app.locator(Selector::id("preferences_overlay"))
         .wait_hidden();
     app.locator(Selector::id("comment_send")).click();

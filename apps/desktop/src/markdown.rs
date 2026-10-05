@@ -197,6 +197,12 @@ script_mod! {
             draw_text +: {color: #x2563eb color_hover: #x1d4ed8 color_pressed: #x1e40af}
         }
         image := Image{width: Fill height: 240 fit: ImageFit.Smallest}
+        cell := mod.widgets.StyledInput{width: Fill height: Fit is_multiline: false empty_text: " "
+            padding: 4
+            draw_bg +: {color: #xffffff color_hover: #xf8fafc color_focus: #xffffff border_size: 0.0}
+            draw_text +: {color: #x253041 color_hover: #x253041 color_focus: #x253041 text_style +: {font_size: 14}}
+            draw_cursor +: {color: #x2563eb}
+        }
     }
 }
 
@@ -240,6 +246,34 @@ pub struct DocMarkdown {
     images: HashMap<u64, String>,
     #[rust]
     links: Vec<WidgetRef>,
+    #[live(false)]
+    pub editable_table: bool,
+    #[rust]
+    pub editor_readonly: bool,
+    #[rust]
+    pub document_selected: bool,
+    #[live]
+    document_band: DrawColor,
+    #[live]
+    comment_band: DrawColor,
+    #[rust]
+    pub comment_ranges: Vec<std::ops::Range<usize>>,
+    #[rust]
+    comment_areas: Vec<Area>,
+    #[rust]
+    source_runs: Vec<crate::edit_projection::Run>,
+    #[rust]
+    selection_anchor: Option<usize>,
+    #[rust]
+    selected_source: Option<std::ops::Range<usize>>,
+    #[rust]
+    had_document_selection: bool,
+    #[rust]
+    cells: Vec<(
+        WidgetRef,
+        std::ops::Range<usize>,
+        crate::edit_projection::Projection,
+    )>,
 }
 
 impl Widget for DocMarkdown {
@@ -248,16 +282,106 @@ impl Widget for DocMarkdown {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        if self.text_flow.selectable {
+            let point = match event {
+                Event::MouseDown(m) if m.button == MouseButton::PRIMARY => Some((m.abs, true)),
+                Event::MouseMove(m) => Some((m.abs, false)),
+                Event::MouseUp(m) if m.button == MouseButton::PRIMARY => Some((m.abs, false)),
+                _ => None,
+            };
+            if let Some((point, down)) = point {
+                if down {
+                    self.selection_anchor = self.text_flow.selection_point_to_char_index(cx, point);
+                    self.selected_source = None;
+                }
+                if let (Some(anchor), Some(cursor)) = (
+                    self.selection_anchor,
+                    self.text_flow.selection_point_to_char_index(cx, point),
+                ) {
+                    let projection = crate::edit_projection::Projection {
+                        text: self.text_flow.selection_get_full_text(),
+                        runs: self.source_runs.clone(),
+                    };
+                    self.selected_source = projection
+                        .comment_range(self.body.as_ref(), anchor.min(cursor)..anchor.max(cursor));
+                }
+                if matches!(event, Event::MouseUp(_)) {
+                    self.selection_anchor = None;
+                }
+            }
+        }
         self.text_flow.handle_event(cx, event, scope);
+        if self.text_flow.selectable
+            && matches!(event,Event::KeyDown(key) if key.key_code==KeyCode::KeyA && key.modifiers.is_primary())
+        {
+            let projection = crate::edit_projection::Projection {
+                text: self.text_flow.selection_get_full_text(),
+                runs: self.source_runs.clone(),
+            };
+            self.selected_source =
+                projection.comment_range(self.body.as_ref(), 0..projection.text.len());
+        }
+        if let Event::Actions(actions) = event {
+            use crate::styled_input::StyledInputWidgetRefExt;
+            for (widget, range, projection) in &self.cells {
+                let input = widget.as_styled_input();
+                if let Some(text) = input.changed(actions) {
+                    let source = &self.body.as_ref()[range.clone()];
+                    // A literal pipe cannot become a new column accidentally.
+                    if !text.contains(['|', '\n', '\r'])
+                        && let Some(replacement) = projection.changed(source, &text)
+                    {
+                        let mut updated = self.body.as_ref().to_owned();
+                        updated.replace_range(range.clone(), &replacement);
+                        cx.widget_action(self.widget_uid(), TableAction::Changed(updated));
+                    } else {
+                        input.set_text(cx, &projection.text);
+                        cx.widget_action(self.widget_uid(), TableAction::Rejected);
+                    }
+                }
+            }
+        }
     }
 
     fn draw_walk(&mut self, cx: &mut Cx2d, _scope: &mut Scope, walk: Walk) -> DrawStep {
         self.auto_id = 0;
         self.links.clear();
+        self.cells.clear();
+        self.comment_areas.clear();
+        self.source_runs.clear();
 
         self.begin(cx, walk);
-        self.process_markdown_doc(cx);
+        if self.document_selected {
+            self.text_flow.areas_tracker.push_tracker();
+        }
+        if self.editable_table && self.body.as_ref().trim_start().starts_with('|') {
+            self.draw_editable_table(cx);
+        } else {
+            self.process_markdown_doc(cx);
+        }
         self.end(cx);
+        if self.document_selected {
+            // Capture actual drawn row rectangles, including list markers.
+            // TextFlow's independent selection layout diverges inside list
+            // turtles; do not recompute glyph geometry for whole-block bands.
+            let (start, end) = self.text_flow.areas_tracker.pop_tracker();
+            let rects: Vec<_> = self.text_flow.areas_tracker.areas[start..end]
+                .iter()
+                .map(|area| area.rect(cx))
+                .collect();
+            self.document_band.color = vec4(105.0 / 255.0, 175.0 / 255.0, 165.0 / 255.0, 0.2);
+            for rect in rects {
+                self.document_band.draw_abs(cx, rect);
+            }
+            for link in &self.links {
+                self.document_band.draw_abs(cx, link.area().rect(cx));
+            }
+        }
+        self.comment_band.color = vec4(1.0, 0.77, 0.03, 0.25);
+        for area in &self.comment_areas {
+            self.comment_band.draw_abs(cx, area.rect(cx));
+        }
+        self.had_document_selection = self.document_selected;
 
         DrawStep::done()
     }
@@ -275,7 +399,193 @@ impl Widget for DocMarkdown {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub enum TableAction {
+    Changed(String),
+    Rejected,
+    #[default]
+    None,
+}
+fn draw_source_text(
+    tf: &mut TextFlow,
+    cx: &mut Cx2d,
+    text: &str,
+    source: std::ops::Range<usize>,
+    comments: &[std::ops::Range<usize>],
+    areas: &mut Vec<Area>,
+    runs: &mut Vec<crate::edit_projection::Run>,
+) {
+    let start = tf.selection_text_len();
+    runs.push(crate::edit_projection::Run {
+        visible: start..start + text.len(),
+        source: source.clone(),
+        style: Default::default(),
+    });
+    let mut boundaries = vec![0, text.len()];
+    if source.len() == text.len() {
+        for comment in comments {
+            let a = comment.start.max(source.start);
+            let b = comment.end.min(source.end);
+            if a < b {
+                boundaries.extend([a - source.start, b - source.start]);
+            }
+        }
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    for pair in boundaries.windows(2) {
+        let Some(part) = text.get(pair[0]..pair[1]) else {
+            continue;
+        };
+        let marked = comments
+            .iter()
+            .any(|c| c.start < source.start + pair[1] && c.end > source.start + pair[0]);
+        if marked {
+            tf.areas_tracker.push_tracker();
+        }
+        tf.draw_text(cx, part);
+        if marked {
+            let (a, b) = tf.areas_tracker.pop_tracker();
+            areas.extend_from_slice(&tf.areas_tracker.areas[a..b]);
+        }
+    }
+}
 impl DocMarkdown {
+    pub fn precise_selection(&self) -> Option<std::ops::Range<usize>> {
+        // TextFlow's public text omits object-replacement gaps, while indices
+        // include them. Refuse unmapped complex child content rather than
+        // silently shifting a comment onto the wrong bytes.
+        if self.text_flow.selection_get_full_text().len() != self.text_flow.selection_text_len() {
+            return None;
+        }
+        self.selected_source.clone()
+    }
+    pub fn set_cells_readonly(&mut self, cx: &mut Cx, value: bool) {
+        use crate::styled_input::StyledInputWidgetRefExt;
+        self.editor_readonly = value;
+        for (widget, _, _) in &self.cells {
+            widget.as_styled_input().set_is_read_only(cx, value);
+        }
+    }
+    pub fn cell_focused(&self, cx: &Cx) -> bool {
+        use crate::styled_input::StyledInputWidgetRefExt;
+        self.cells.iter().any(|(widget, _, _)| {
+            widget
+                .as_styled_input()
+                .borrow()
+                .is_some_and(|i| i.key_focus(cx))
+        })
+    }
+    pub fn cell_selection(&self, cx: &Cx) -> Option<std::ops::Range<usize>> {
+        use crate::styled_input::StyledInputWidgetRefExt;
+        self.cells.iter().find_map(|(widget, range, projection)| {
+            let input = widget.as_styled_input();
+            if !input.borrow().is_some_and(|i| i.key_focus(cx)) {
+                return None;
+            }
+            let selection = input.selection();
+            projection
+                .source_range(selection.start().index..selection.end().index)
+                .map(|r| range.start + r.start..range.start + r.end)
+        })
+    }
+    fn draw_editable_table(&mut self, cx: &mut Cx2d) {
+        use crate::styled_input::StyledInputWidgetRefExt;
+        let source = self.body.as_ref().to_owned();
+        let mut cell_start = 0;
+        let mut header = false;
+        let mut alignments = Vec::new();
+        let mut column = 0;
+        for (event, range) in Parser::new_ext(&source, Options::ENABLE_TABLES).into_offset_iter() {
+            match event {
+                MdEvent::Start(Tag::Table(values)) => {
+                    self.text_flow.begin_table(cx, values.len());
+                    alignments = values;
+                }
+                MdEvent::End(TagEnd::Table) => self.text_flow.end_table(cx),
+                MdEvent::Start(Tag::TableHead) => {
+                    header = true;
+                    column = 0;
+                    self.text_flow.begin_table_header_row(cx);
+                }
+                MdEvent::End(TagEnd::TableHead) => {
+                    self.text_flow.end_table_row(cx);
+                    header = false;
+                    self.text_flow.in_table_header = false;
+                }
+                MdEvent::Start(Tag::TableRow) => {
+                    column = 0;
+                    self.text_flow.begin_table_row(cx);
+                }
+                MdEvent::End(TagEnd::TableRow) => self.text_flow.end_table_row(cx),
+                MdEvent::Start(Tag::TableCell) => {
+                    cell_start = range.start;
+                    self.text_flow.begin_table_cell(
+                        cx,
+                        alignments.get(column).map(alignment_to_x).unwrap_or(0.0),
+                    );
+                }
+                MdEvent::End(TagEnd::TableCell) => {
+                    let raw = &source[cell_start..range.end];
+                    let start = cell_start + raw.len() - raw.trim_start().len();
+                    let end = range.end - raw.len() + raw.trim_end().len();
+                    let range = start..end.max(start);
+                    let mut projection =
+                        crate::edit_projection::Projection::new(&source[range.clone()], false);
+                    if projection.runs.is_empty() {
+                        projection = crate::edit_projection::Projection::new("", false);
+                    }
+                    if header {
+                        for run in &mut projection.runs {
+                            run.style.bold = true;
+                        }
+                    }
+                    self.auto_id += 1;
+                    let item = self.text_flow.item(cx, LiveId(self.auto_id), id!(cell));
+                    let input = item.as_styled_input();
+                    input.set_is_read_only(cx, self.editor_readonly);
+                    if input.text() != projection.text {
+                        input.set_text(cx, &projection.text);
+                    }
+                    if let Some(mut native) = input.borrow_mut() {
+                        native.set_runs(cx, projection.runs.clone());
+                        native.comment_ranges = self
+                            .comment_ranges
+                            .iter()
+                            .filter_map(|h| {
+                                let a = h.start.max(range.start);
+                                let b = h.end.min(range.end);
+                                (a < b)
+                                    .then(|| {
+                                        projection.visible_range(a - range.start..b - range.start)
+                                    })
+                                    .flatten()
+                            })
+                            .collect();
+                    }
+                    if self.document_selected
+                        && let Some(mut native) = input.borrow_mut()
+                    {
+                        native.select_all(cx);
+                    } else if self.had_document_selection {
+                        let cursor = input.selection().cursor;
+                        input.set_selection(
+                            cx,
+                            makepad_widgets::makepad_draw::text::selection::Selection {
+                                anchor: cursor,
+                                cursor,
+                            },
+                        );
+                    }
+                    item.draw_all_unscoped(cx);
+                    self.cells.push((item, range, projection));
+                    self.text_flow.end_table_cell(cx);
+                    column += 1;
+                }
+                _ => {}
+            }
+        }
+    }
     fn process_markdown_doc(&mut self, cx: &mut Cx2d) {
         let tf = &mut self.text_flow;
         // Track state for nested formatting
@@ -291,8 +601,8 @@ impl DocMarkdown {
             Options::ENABLE_TABLES | Options::ENABLE_MATH,
         );
 
-        let mut events = parser.peekable();
-        while let Some(event) = events.next() {
+        let mut events = parser.into_offset_iter().peekable();
+        while let Some((event, source_range)) = events.next() {
             match event {
                 MdEvent::Start(Tag::Heading { level, .. }) => {
                     if !is_first_block {
@@ -310,8 +620,10 @@ impl DocMarkdown {
                     };
                     tf.push_size_abs_scale(scale);
                     tf.bold.push();
+                    tf.font_colors.push(Vec4f::from_u32(0x054aa6ff));
                 }
                 MdEvent::End(TagEnd::Heading(_level)) => {
+                    tf.font_colors.pop();
                     tf.bold.pop();
                     tf.font_sizes.pop();
                     tf.new_line_collapsed(cx);
@@ -389,10 +701,19 @@ impl DocMarkdown {
                     self.auto_id += 1;
                     let item = tf.item(cx, LiveId(self.auto_id), live_id!(link));
                     let mut label = String::new();
-                    for child in events.by_ref() {
+                    let mut label_runs = Vec::new();
+                    for (child, range) in events.by_ref() {
                         match child {
                             MdEvent::End(TagEnd::Link) => break,
-                            MdEvent::Text(t) | MdEvent::Code(t) => label.push_str(&t),
+                            MdEvent::Text(t) | MdEvent::Code(t) => {
+                                let start = label.len();
+                                label.push_str(&t);
+                                label_runs.push(crate::edit_projection::Run {
+                                    visible: start..label.len(),
+                                    source: range,
+                                    style: Default::default(),
+                                });
+                            }
                             MdEvent::SoftBreak | MdEvent::HardBreak => label.push(' '),
                             _ => {}
                         }
@@ -401,13 +722,27 @@ impl DocMarkdown {
                     item.set_text(cx, &label);
                     self.links.push(item.clone());
                     item.draw_all_unscoped(cx);
+                    let start = tf.selection_text_len();
+                    for mut run in label_runs {
+                        run.visible.start += start;
+                        run.visible.end += start;
+                        self.source_runs.push(run);
+                    }
+                    tf.push_widget_text_for_selection(item.clone(), &label);
+                    if self
+                        .comment_ranges
+                        .iter()
+                        .any(|c| c.start < source_range.end && c.end > source_range.start)
+                    {
+                        self.comment_areas.push(item.area());
+                    }
                 }
                 MdEvent::End(TagEnd::Link) => {
                     // Link handling is done in Start event
                 }
                 MdEvent::Start(Tag::Image { dest_url, .. }) => {
                     let mut alt = String::new();
-                    for child in events.by_ref() {
+                    for (child, _) in events.by_ref() {
                         match child {
                             MdEvent::End(TagEnd::Image) => break,
                             MdEvent::Text(t) => alt.push_str(&t),
@@ -499,7 +834,17 @@ impl DocMarkdown {
                     tf.push_size_rel_scale(tf.fixed_font_size_scale);
                     tf.fixed.push();
                     tf.inline_code.push();
-                    tf.draw_text(cx, &text);
+                    let raw = &self.body.as_ref()[source_range.clone()];
+                    let ticks = raw.bytes().take_while(|b| *b == b'`').count();
+                    draw_source_text(
+                        tf,
+                        cx,
+                        &text,
+                        source_range.start + ticks..source_range.end - ticks,
+                        &self.comment_ranges,
+                        &mut self.comment_areas,
+                        &mut self.source_runs,
+                    );
                     tf.font_sizes.pop();
                     tf.fixed.pop();
                     tf.inline_code.pop();
@@ -551,7 +896,16 @@ impl DocMarkdown {
                     } else if self.in_code_block {
                         self.code_block_string.push_str(&text);
                     } else {
-                        tf.draw_text(cx, text.trim_end_matches("\n"));
+                        let displayed = text.trim_end_matches('\n');
+                        draw_source_text(
+                            tf,
+                            cx,
+                            displayed,
+                            source_range.clone(),
+                            &self.comment_ranges,
+                            &mut self.comment_areas,
+                            &mut self.source_runs,
+                        );
                     }
                 }
                 MdEvent::SoftBreak => {
