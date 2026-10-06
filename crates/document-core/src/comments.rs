@@ -8,6 +8,13 @@ const MAX_THREADS: usize = 128;
 const MAX_MESSAGES: usize = 128;
 const MAX_MESSAGE_BYTES: usize = 16 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default, Copy)]
+// Legacy comments remain Modify; new UI explicitly chooses its safe default.
+pub enum TaskMode {
+    Explain,
+    #[default]
+    Modify,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Speaker {
     User,
@@ -38,8 +45,50 @@ pub struct CommentThread {
     /// persisted before this flag existed.
     #[serde(default)]
     pub(crate) ask_ai: bool,
+    /// Latest successfully applied AI edit, for review only, never authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_change: Option<CommentChange>,
+    /// Successful Agent handling, independent of manual resolution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) processed_round: Option<u64>,
+    #[serde(default)]
+    pub(crate) mode: TaskMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending: Option<crate::review::Candidate>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommentChange {
+    pub before: String,
+    pub after: String,
+    pub base_revision: u64,
+    pub applied_revision: u64,
+    pub round: u64,
 }
 impl CommentThread {
+    pub fn mode(&self) -> TaskMode {
+        self.mode
+    }
+    pub fn pending(&self) -> Option<&crate::review::Candidate> {
+        self.pending.as_ref()
+    }
+    pub fn processed(&self) -> bool {
+        self.processed_round.is_some()
+            || (self
+                .last_change
+                .as_ref()
+                .is_some_and(|c| c.round == self.round)
+                && self
+                    .messages
+                    .last()
+                    .is_some_and(|m| m.speaker == Speaker::Agent))
+    }
+    pub fn last_change(&self) -> Option<&CommentChange> {
+        self.last_change.as_ref()
+    }
+    pub fn round(&self) -> u64 {
+        self.round
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -76,13 +125,15 @@ impl CommentThread {
             .join("\n\n")
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommentRequest {
     pub thread: usize,
     pub round: u64,
     pub revision: u64,
     pub original: String,
     pub messages: Vec<Message>,
+    pub mode: TaskMode,
 }
 impl Workbench {
     /// Stamp a newly appended message once. No document/round/revision change
@@ -155,6 +206,10 @@ impl Workbench {
             }],
             resolved: false,
             ask_ai,
+            last_change: None,
+            processed_round: None,
+            mode: TaskMode::Modify,
+            pending: None,
         });
         Ok(id)
     }
@@ -181,6 +236,8 @@ impl Workbench {
             created_at: None,
         });
         thread.round = round;
+        thread.processed_round = None;
+        thread.pending = None;
         Ok(())
     }
     /// Explicit human rebind after an overlapping edit/undo. Old inflight
@@ -208,6 +265,8 @@ impl Workbench {
         thread.revision = self.revision;
         thread.round = round;
         thread.resolved = false;
+        thread.processed_round = None;
+        thread.pending = None;
         Ok(())
     }
     pub fn reopen_thread(&mut self, id: usize) -> Result<(), EditError> {
@@ -278,6 +337,7 @@ impl Workbench {
             .checked_add(1)
             .ok_or(EditError::RevisionExhausted)?;
         thread.resolved = true;
+        thread.pending = None;
         Ok(())
     }
     pub fn comment_request(&self, id: usize) -> Result<CommentRequest, EditError> {
@@ -296,6 +356,7 @@ impl Workbench {
             revision: thread.revision,
             original: thread.original.clone(),
             messages: thread.messages.clone(),
+            mode: thread.mode,
         })
     }
     /// UI must explicitly enable automatic editing for this request. No approval
@@ -307,6 +368,9 @@ impl Workbench {
         explanation: &str,
     ) -> Result<(), EditError> {
         check_message(explanation)?;
+        if request.mode == TaskMode::Explain && replacement != request.original {
+            return Err(EditError::InvalidSelection);
+        }
         Self::check_size(replacement.len())?;
         let fresh = self.comment_request(request.thread)?;
         if fresh != *request {
@@ -326,11 +390,24 @@ impl Workbench {
             return Err(EditError::StateLimit);
         }
         let mut candidate = self.clone();
-        candidate.commit(next)?;
+        // An explanatory reply with identical text is not a document edit:
+        // preserve revision / undo while still recording successful handling.
+        if candidate.text != next {
+            candidate.commit(next)?;
+        }
         let thread = &mut candidate.threads[request.thread];
         thread.range = range.start..end;
         thread.original = replacement.to_owned();
         thread.revision = candidate.revision;
+        thread.processed_round = Some(request.round);
+        thread.pending = None;
+        thread.last_change = Some(CommentChange {
+            before: request.original.clone(),
+            after: replacement.to_owned(),
+            base_revision: request.revision,
+            applied_revision: candidate.revision,
+            round: request.round,
+        });
         thread.messages.push(Message {
             speaker: Speaker::Agent,
             text: explanation.trim().to_owned(),
@@ -374,6 +451,21 @@ pub(crate) fn validate_threads(
             return Err(EditError::InvalidSnapshot);
         }
         if t.revision == revision && text.get(t.range.clone()) != Some(t.original.as_str()) {
+            return Err(EditError::InvalidSnapshot);
+        }
+        if t.processed_round
+            .is_some_and(|round| round == 0 || round > t.round)
+        {
+            return Err(EditError::InvalidSnapshot);
+        }
+        if let Some(change) = &t.last_change
+            && (change.before.len() > crate::MAX_DOCUMENT_BYTES
+                || change.after.len() > crate::MAX_DOCUMENT_BYTES
+                || change.base_revision > change.applied_revision
+                || change.applied_revision > revision
+                || change.round == 0
+                || change.round > t.round)
+        {
             return Err(EditError::InvalidSnapshot);
         }
         for m in &t.messages {

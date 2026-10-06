@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, ops::Range};
 pub mod comments;
-pub use comments::{CommentRequest, CommentThread, Message, Speaker};
+pub mod review;
+pub mod table;
+pub use comments::{CommentChange, CommentRequest, CommentThread, Message, Speaker, TaskMode};
 
 pub const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY: usize = 100;
@@ -209,6 +211,10 @@ impl Workbench {
                 .iter()
                 .map(|t| {
                     t.original.len()
+                        + t.pending.as_ref().map_or(0, |p| p.bytes())
+                        + t.last_change
+                            .as_ref()
+                            .map_or(0, |c| c.before.len() + c.after.len())
                         + t.messages
                             .iter()
                             .map(|m| m.text.len() + m.author.as_ref().map_or(0, String::len))

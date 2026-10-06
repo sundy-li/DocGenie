@@ -737,6 +737,12 @@ impl StyledInput {
             self.draw_bg.redraw(cx);
         }
     }
+    pub fn set_comment_ranges(&mut self, cx: &mut Cx, ranges: Vec<std::ops::Range<usize>>) {
+        if self.comment_ranges != ranges {
+            self.comment_ranges = ranges;
+            self.draw_bg.redraw(cx);
+        }
+    }
     pub fn set_runs(&mut self, cx: &mut Cx, runs: Vec<crate::edit_projection::Run>) {
         if self.runs != runs {
             self.runs = runs;

@@ -78,15 +78,32 @@ script_mod! {
                     // The overlay and page share one window-sized stack.
                     page := View{width: Fill height: Fill flow: Down
                     SolidView{width: Fill height: Fill flow: Right spacing: 1 draw_bg.color: #xe7eaee
+                        navigation_rail := SolidView{visible: false width: 36 height: Fill flow: Down draw_bg.color: #xf8f9fb
+                            View{width: Fill height: 44 align: Align{x: 0.5 y: 0.5}
+                                expand_navigation := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-left.svg")}
+                            }
+                        }
                         navigation_panel := SolidView{width: 248 height: Fill flow: Down draw_bg.color: #xf8f9fb
-                            View{width: Fill height: 44}
+                            View{width: Fill height: 44 flow: Right padding: Inset{right: 8} align: Align{y: 0.5}
+                                View{width: Fill height: 1}
+                                toggle_navigation := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-left.svg")}
+                            }
                             View{width: Fill height: Fill flow: Down padding: 12 spacing: 10
                             View{width: Fill height: 32 flow: Right align: Align{x: 0.0 y: 0.5}
                                 Label{text: "DocGenie" draw_text +: {color: #x20262e text_style +: {font_size: 16}}}
                                 View{width: Fill height: 1}
                             }
-                            new_document := Action{width: Fill text: "+  新建文档" align: Align{x: 0.0 y: 0.5}}
-                            document_search := Action{width: Fill text: "搜索 / 跳转文档     ⌘O" align: Align{x: 0.0 y: 0.5} draw_text +: {color: #x687381}}
+                            new_document := ButtonFlatterIcon{width: Fill height: 36 text: "新建文档" spacing: 8 padding: 8 align: Align{x: 0.0 y: 0.5}
+                                icon_walk: Walk{width: 16 height: 16}
+                                draw_icon +: {color: #x2563eb svg: crate_resource("self:resources/icons/new.svg")}
+                                draw_text +: {color: #x2563eb text_style +: {font_size: 12}}
+                                draw_bg +: {color: #xeaf1ff color_hover: #xdce9ff color_down: #xcddefa border_size: 0.0 border_radius: 5.0}
+                            }
+                            document_search := ButtonFlatterIcon{width: Fill height: 32 text: "搜索文档   ⌘O" spacing: 8 padding: 8 align: Align{x: 0.0 y: 0.5}
+                                icon_walk: Walk{width: 15 height: 15}
+                                draw_icon +: {color: #x687381 svg: crate_resource("self:resources/icons/search.svg")}
+                                draw_text +: {color: #x687381 text_style +: {font_size: 12}}
+                            }
                             View{width: Fill height: 32 flow: Right align: Align{x: 0.0 y: 0.5} spacing: 2
                                 Caption{text: "文档"}
                                 View{width: Fill height: 1}
@@ -100,17 +117,15 @@ script_mod! {
                         }
                         center_panel := SolidView{width: Fill height: Fill flow: Down draw_bg.color: #xffffff
                             center_toolbar := SolidView{width: Fill height: 44 flow: Right align: Align{x: 0.0 y: 0.5} padding: Inset{left: 8 right: 8 top: 6 bottom: 6} spacing: 3 draw_bg.color: #xf8f9fb
-                                toggle_navigation := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-left.svg")}
                                 tab_strip := ScrollXView{width: Fill height: 32 flow: Right spacing: 3
                                     tab0 := DocTab{} tab1 := DocTab{} tab2 := DocTab{} tab3 := DocTab{} tab4 := DocTab{} tab5 := DocTab{}
                                 }
                                 agent_cancel := IconAction{visible: false draw_icon.svg: crate_resource("self:resources/icons/stop.svg")}
                                 retry_save := IconAction{draw_icon.svg: crate_resource("self:resources/icons/retry.svg")}
                                 undo_button := IconAction{draw_icon.svg: crate_resource("self:resources/icons/undo.svg")}
-                                mode_edit := Action{text: "编辑" grab_key_focus: false}
-                                mode_read := Action{visible: false text: "阅读" grab_key_focus: false}
+                                mode_edit := IconAction{draw_icon.svg: crate_resource("self:resources/icons/edit.svg")}
+                                mode_read := IconAction{visible: false draw_icon.svg: crate_resource("self:resources/icons/read.svg")}
                                 preferences_button := IconAction{draw_icon.svg: crate_resource("self:resources/icons/settings.svg")}
-                                toggle_comments := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-right.svg")}
                             }
                             empty_workspace := View{visible: false width: Fill height: Fill flow: Down align: Align{x: 0.5 y: 0.5} spacing: 12
                                 Label{text: "没有打开的文档"}
@@ -147,8 +162,15 @@ script_mod! {
                             status_label := Caption{text: "选中文本后添加评论 · ⌘⇧M" draw_text +: {text_style +: {font_size: 11}}}
                         }
                         }
+                        comments_rail := SolidView{visible: false width: 36 height: Fill flow: Down draw_bg.color: #xf8f9fb
+                            View{width: Fill height: 44 align: Align{x: 0.5 y: 0.5}
+                                expand_comments := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-right.svg")}
+                            }
+                        }
                         comments_panel := SolidView{width: 340 height: Fill flow: Down draw_bg.color: #xf8f9fb
-                            View{width: Fill height: 44}
+                            View{width: Fill height: 44 flow: Right padding: Inset{left: 8} align: Align{y: 0.5}
+                                toggle_comments := IconAction{draw_icon.svg: crate_resource("self:resources/icons/sidebar-right.svg")}
+                            }
                             View{width: Fill height: Fill flow: Down padding: 16 spacing: 10
                             View{width: Fill height: Fit flow: Right spacing: 2 padding: Inset{left: 0 right: 0 top: 0 bottom: 4}
                                 tab_outline := Action{text: "大纲" grab_key_focus: false}
@@ -161,38 +183,27 @@ script_mod! {
                             }
                             comments_body := View{width: Fill height: Fill flow: Down spacing: 8
                             View{width: Fill height: Fit flow: Right spacing: 8
-                                filter_open := Action{text: "未解决 0" grab_key_focus: false}
-                                filter_resolved := Action{text: "已解决 0" grab_key_focus: false}
+                                filter_open := Action{text: "未解决 0" grab_key_focus: false draw_text +: {color: #x505b6b} draw_bg +: {border_radius: 5.0}}
+                                filter_resolved := Action{text: "已解决 0" grab_key_focus: false draw_text +: {color: #x505b6b} draw_bg +: {border_radius: 5.0}}
                             }
-                            threads := mod.widgets.ThreadList{}
-                            threads_empty := Caption{text: "还没有评论。选中文本后添加评论。"}
-                            View{width: Fill height: Fit flow: Right spacing: 6
+                            View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
                                 comments_label := Label{text: "评论 (0)" draw_text +: {color: #x303740 text_style +: {font_size: 14}}}
                                 View{width: Fill height: 1}
-                                thread_prev := Action{text: "↑" width: 28 height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
-                                thread_next := Action{text: "↓" width: 28 height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
-                                thread_resolve_toggle := Action{text: "解决" width: Fit height: 28 grab_key_focus: false
-                                    draw_text +: {color: #x626b78 color_hover: #x7c3aed color_down: #x7c3aed}
-                                }
+                                thread_prev := IconAction{draw_icon.svg: crate_resource("self:resources/icons/arrow-up.svg")}
+                                thread_next := IconAction{draw_icon.svg: crate_resource("self:resources/icons/arrow-down.svg")}
+                                comment_new := IconAction{draw_icon +: {color: #x2563eb svg: crate_resource("self:resources/icons/comment.svg")}}
                             }
-                            SolidView{width: Fill height: 1 draw_bg.color: #xe7eaee}
-                            quote := mod.widgets.CommentQuote{}
-                            thread_state := Caption{text: "尚未选择段落"}
-                            thread_rebind := Action{text: "将当前选段绑定到此线程"}
-                            transcript := mod.widgets.Discussion{}
-                            View{width: Fill height: 1 draw_bg.color: #xe8eaed}
-                            Label{text: "回复" draw_text +: {color: #x626b78 text_style +: {font_size: 12}}}
-                            comment_input := TextInput{width: Fill height: 64 is_multiline: true empty_text: "添加评论，或继续回复…" blink_speed: 0.5
-                                draw_bg +: {color: #xffffff color_empty: #xffffff color_hover: #xffffff color_focus: #xffffff border_color: #xdce1e8 border_color_focus: #x2563eb}
-                                draw_cursor +: {color: #x2563eb}
-                            }
-                            View{width: Fill height: Fit flow: Right spacing: 8
-                                comment_send := Action{text: "发送评论 / 回复"}
-                                comment_new := Action{text: "新评论"}
+                            threads_empty := Caption{text: "没有评论。选中文字后添加评论。"}
+                            threads := mod.widgets.ThreadList{}
+                            new_comment_panel := View{visible: false width: Fill height: Fit flow: Down spacing: 8
+                                quote := mod.widgets.CommentQuote{}
+                                thread_state := Caption{text: "新评论 · 先选择文档段落"}
+                                comment_input := TextInput{width: Fill height: 64 is_multiline: true empty_text: "添加评论…" blink_speed: 0.5
+                                    draw_bg +: {color: #xffffff color_focus: #xffffff color_empty: #xffffff border_color: #xd5d9de}
+                                    draw_cursor +: {color: #x2563eb}
+                                }
+                                comment_send := Action{text: "发送评论"}
+                                thread_rebind := Action{visible: false text: "将当前选段绑定到此线程"}
                             }
                             agent_hint := Caption{text: "Agent 默认关闭 · ⌘, 设置"}
                             }
@@ -200,7 +211,9 @@ script_mod! {
                     }
                     }
                     }
+                    ui_hint := mod.widgets.UiHint{}
                     tab_menu := mod.widgets.TabMenu{}
+                    table_menu := mod.widgets.TableMenu{}
                     comment_menu := mod.widgets.CommentMenu{}
                     comment_composer := mod.widgets.CommentComposer{}
                     dialog_overlay := View{visible: false width: Fill height: Fill flow: Overlay

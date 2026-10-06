@@ -2,7 +2,63 @@
 
 以下历史记录保留原 package 名 `agent-docs-desktop`，当前名称为 `docgenie-desktop`，可执行检查命令见 README。
 
-## 精确评论 / ⌘Z / 灰色引用 + 作者时间（本次验收）
+## 表格结构增删（本次验收）
+
+- 53 core/store通过（table新4项），37 App单测通过，table_edit两项原生debug专项通过；presentation四项与tab_actions三项通过，fmt、Clippy all-targets -D warnings、diff check、runtime pin通过。最终debug全量121通过/1失败/3跳过：唯一失败仍是既有reading_cross终点只选到Middle，不宣称全量全绿。
+- table_edit真实单元格右键依次六命令（上/下行、删行、左/右列、删列），每次undo恢复完整原文，对header/最后列禁用状态断言；结构改完后cell输入仍保留table/邻文。header-only新增首数据行、保存重启、reading不显示结构菜单通过，原生菜单截图已查看。
+- core涵盖中文/inline格式/链接/escaped pipe/左右对齐原始bytes保留、row/column逆操作、CRLF、无尾newline末行删除、header与last column拒绝、ragged拒绝、stale revision原子拒绝，表格评论inflight结果冲突与undo/restore。
+- 支持矩形显式首尾pipe表，64列/4096数据行，复杂无outer pipe/不规则行拒绝；不实现排序、复制、移动。target range/revision来自native cell hit，不把menu当授权，readonly/switch/mode阻断。隐藏实例退出，未调用真实模型、未改runtime，尚未commit/push。
+
+## 图标/hover/侧栏/高亮与未闭合围栏（此前验收）
+
+- 图标UI版本debug全量117通过/0失败/3跳过（35 App单测+82 GUI），包含resolved_highlight两项。随后围栏解析修改后37 App单测、49 core/store通过；fence_live/preview/presentation/resolved/Agent相关专项取得通过，但本轮未对最终围栏版本再执行完整全量。fmt、Clippy -D warnings、diff check通过。
+- UiHint悬停400ms的真实native截图已检查，view_change展开含义可见、点击收起提示、展开/收起图标切换，原send/resolve/reopen/card draft/controller流程通过。sidebar坐标断言证明collapse在side panel不在center toolbar；36pt rail恢复入口/窄窗口/草稿通过。
+- resolved_highlight核对编辑/阅读/重新激活无yellow，重开恢复；重叠两评论只解决其中一个保留剩余band。agent_progress成功和no-op成功后yellow像素<50，并有持久processed badge，重启恢复；无需把已处理评论假设为resolved。
+- Fence专项逐字输入` → `` → ```保留可见，未闭合正文正常行编辑；输入结束行后只有包裹内容成为代码，后续段落单独呈现。events单元核对短/长/不同marker、语言标记和中文offset不变化，素材脚本仍literal text。原生未闭合与闭合截图已审阅。
+- 一个Agent截图抓取404使该专项首次失败，单项重跑通过；不把中途命令计为全量通过。围栏单元第一次更短closing test暴露新opener，修正同长buffer迭代mask后通过。未改runtime、未发真实模型，隐藏实例退出，尚未commit/push。
+
+## Agent 动画 / 无改动隐藏 diff / 已处理（此前验收）
+
+- 49 项 core/store 通过、35 App 单测通过；Agent专项5项（agent_progress两种响应、503 failure、取消/排队 lifecycle）通过，thread_cards另项通过。fmt、Clippy all-targets -D warnings、diff check与runtime pin通过。均为debug与本地Mock，无真实模型。
+- busy卡片spinner两帧crop像素不同且紫色ink>10，真实等待、成功/停止隐藏验证；已审阅原生工作与无改动完成截图。没有fake timer/percent，直接复用固定LoadingSpinner draw_pass.time动画，不改runtime。
+- explanation-only成功：卡片已处理可见、view_change/change_view隐藏、正文和revision保持不变，重启仍隐藏diff并显示已处理；core验证不产生undo/no replay、reply/rebind清除处理标记、resolve/reopen独立、旧字段兼容/非法round拒绝。失败/取消不标处理。实际文本改变仍显示原diff通路。
+- 本次全量实际114通过/1失败/3跳过，唯一失败仍是reading_cross多块拖选终点只到Middle（不是Agent新功能），未掩盖或宣称全绿。最新小幅底部文案更正后Agent专项5项及Clippy重跑通过。阅读跨块端点稳定性仍待修复；不能把单独重跑曾通过当永久解决。
+- 隐藏实例退出；用户App未关闭；未commit/push。
+
+## 跨正文块选区 / 标签菜单保持打开（此前验收）
+
+- 编辑普通正文正反拖选三个块，精确范围含中间分隔换行，原有块布局保持；源范围逐块绘制真实浅色 band，像素断言覆盖中间/终点。跨段评论提交不改正文、Backspace/输入替换、⌘Z 恢复通过。Reading 普通三段拖选评论通过。系统 clipboard copy/cut 通路已接入，standalone 不支持真实系统 clipboard 验收，仍需人工检查。
+- TabMenu opener MouseUp、惯性 Scroll、modifier 不关闭；外点和 Escape 关闭。tab_actions 3 项（含 dirty flush、外部编辑冲突）通过。App 原先 Scroll 直接 hide 与 TabMenu 内不同契约已统一；未改 runtime。
+- 真实 key focus 校验修复：跨块/全篇 selection 不等于输入焦点，评论弹窗 fill 的 Cmd+A/TextInput 不得被正文截获。单块 apply_drag 只有指针离开块时才探测跨块端点，避免引用内 click 触发合成 hit-test 搅乱后续 keyboard selection。quote_highlight / precise_comments / composer / selection / drag 回归通过。
+- 最终 debug 全量实际 113 passed/1 failed（35 App 单测、78 GUI 通过；1 GUI 截图404），失败的 activation 组重跑4通过但另一截图404；最后 wrapped 用例单独再跑通过，合计当前79 GUI用例均获得通过结果，但不宣称最后一个全量命令 exit0。47核心/存储、Clippy -D warnings、fmt、diff check、runtime pin通过。早期 reading端点坐标未等布局导致错误终点，改为真实ink就绪后再drag，专项与最终全量该测试通过。
+- 安全边界：支持普通正文块端点，复杂表格、图片、code-widget/gap、decoded entity 或 rendered link内部端点未全面支持，不把不确定坐标伪装精确源码。跨块Shift键盘扩选、远距离长文边缘滚动未专项验收。阅读选择保持只读。未发真实模型、独立隐藏实例已退出，未改用户App进程；尚未commit/push。
+
+## Agent 卡片实际进度 + 最近选区修改对比（此前验收）
+
+- debug 全量 34 App 单测 + 76 GUI 全部通过，最后增加 Progress 状态单测与 progress 事件 revision guard 后 35 App 单测、47 核心 / 存储、5 GUI 专项（agent_progress / failure / lifecycle / cards）重新通过；fmt、Clippy all-targets -D warnings、diff check、runtime pin 通过。2 真实网络与 opt-in watcher 全量默认跳过。不运行真实模型，所有截图为本地 Mock。
+- agent_progress Mock 由 channel 阻塞真实 HTTP 回复：请求未返回卡片显示“等待 AI 回复…”，释放后成功应用才显示“AI 已完成”，resolved count 仍为0；view_change 红/绿 before/after 与 revision1→2，save+restart 恢复，undo 留历史 change 不重写当前文档。原生等待 / 完成 / 对比截图已审阅。首次旧截图红色串多一位导致亮紫色，已修正 #fff0f0 后重验。
+- lifecycle GUI 核对取消状态、迟到忽略且无 diff、同线程第二回复排队、新 round 最终完成；HTTP503 失败卡片显示失败不产生修改或 diff。worker preparing / waiting / JSON validating 为实际 milestone，可能很短，无假延时或百分比；不声称 token streaming / reasoning 可见。
+- core 新 comment_change 3 项覆盖精确 before/after 不改邻文、恢复 / undo / stale result、resolved/非法结果不留记录、删除空 after、旧无字段与非法 revision DTO。MAX_STATE_BYTES 包括 retained before+after，候选 apply 后超限拒绝不污染正文。
+- 进度事件带 epoch / UUID / thread / round / revision；过期事件不覆盖取消 / 新文档。读写授权仍 fresh request 校验，resolved 不是 AI complete。last_change 是只读最近一轮记录：undo 后显示历史修改，不提供一键恢复写入，不承诺全历史 / 逐词 diff。
+- 隐藏实例退出，运行中的用户 App 未关闭。尚未 commit / push。
+
+## 完整线程卡片（此前全量验收）
+
+- 最终 debug 全量 34 项 App 单测 + 74 项原生 GUI 全部通过（摘要-only 测试合并为完整卡片过滤测试）；2 项真实网络和 opt-in watcher 默认跳过。44 项核心 / 存储通过；fmt / Clippy all-targets -D warnings / git diff --check / runtime pin 检查通过。隐藏实例已退出，未调用真实模型或改 runtime。
+- `thread_cards` 新专项验证：同卡片第一条 + 回复两条完整可见，第二卡片作者时间、黄色顶部标识、活动卡片内 reply；点击原文定位、不同线程草稿各自保留，解决过滤 / 重开后 draft 不串，切文档后 message 与 input 清空。原生截图已审阅：无摘要与单独详情重复区域。
+- Discussion 动态普通 View children 首次未标 dirty，导致屏幕绘制与 selector 可发现消息不一致；已用 widget_tree_mark_dirty 修复，并以 message_body 严格断言验收。PortalList index 始终是过滤后 index，domain thread ID 单独映射，草稿重新绑定不依据 row index。普通 redraw 不覆盖输入，避免把“第一条草稿”写到第二条。
+- 原 workspace / highlights / ui 测试已适配卡片入口（quote_jump 代 thread_open），resolved 卡片无 reply 代旧 detached state；rebind、Agent 两轮、评论授权、precision / undo、sidebar 草稿、保存恢复和 lifecycle 继续通过。readonly 同步锁卡片回复；草稿 ⌘Z 不路由文档 undo。
+- 视觉：白色卡片边框、灰色引用及左竖线、作者标记与作者时间、消息纵向排布、当前黄色顶边和回复框；参考图中真人头像 / 分享 / 附件 / 等待 AI 条不做无效按钮。当前本地作者“你”，不假冒登录用户。
+- 本轮未 commit / push，之前引用块高亮与连续 Enter / scrollbar 改动一并包含最终全量回归。
+
+## 引用块部分高亮与连续换行滚动（此前专项验收）
+
+- 截图中的整块黄还有 Markdown `>` 引用自身 theme 背景原因，不是精确 range 再次扩段；DocMarkdown 结构 quote 改中性浅灰，只 comment band 黄色。新增 `quote_highlight` 长引用块逐字部分选中，编辑 / 阅读像素和全文不变通过，原生截图审阅确认跨行 selected 几字黄色，邻文灰白。
+- 新 `newline_scroll` 每次回车断言活动输入在 viewport 内：38 次 Enter、末尾输入、保存后继续、溢出 scrollbar 灰色像素、实际鼠标拖 scrollbar 回开头通过。复现旧第24次换行出视口；输入事件预滚新行并在绘制后读 caret，避免虚拟列表没画新行而焦点永远 pending。鼠标滚动取消 follow，右边 scrollbar gesture 原生优先，不被选字捕获。
+- 当前代码最终 11 项相关 debug GUI（newline / quote / precise_comments / highlights / live_preview / selection_scroll / selection_edges）全部通过；44 项核心 / 存储、fmt、Clippy all-targets -D warnings、diff check 通过。5 项激活零位移另重跑通过（首次 screenshot 404 transient 后重新跑）。本轮未再执行整个 GUI 全量，不把专项计作全量。没有真实模型请求，未修改 runtime，独立隐藏实例已退出。
+- 尚未专项覆盖所有嵌套引用、超高结构块每行 keyboard caret、阅读 scrollbar 拖动、不同 OS / IME；既有通路不因此宣称所有大文档已验收。未擅自重写旧整块评论的锚点，旧线程若确实保存整块 range，需用户重新绑定精确文字。
+
+## 精确评论 / ⌘Z / 灰色引用 + 作者时间（此前验收）
 
 - 最终 debug 全量 35 项 App 单测 + 71 项原生 GUI 全部通过；2 项真实网络和 opt-in watcher 默认跳过。44 项 document-core / project-store 测试通过；fmt、Clippy all-targets -D warnings、git diff --check 通过。未修改 runtime、未发真实模型，隐藏实例已退出。
 - 删除两处 comment_block 扩范围：部分中文字只在 composer / thread / 持久化精确 original + range，高亮只覆盖选词；读取 source runs 而非搜索重复正文，读模式部分选择和重复格式段落整选回归通过。新增 core 精确选词 Agent 替换不动邻文 / bold URL、undo conflict、shift / resolve / reopen / rebind / restore，以及元信息限额与旧字段兼容回归。

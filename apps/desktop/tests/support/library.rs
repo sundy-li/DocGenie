@@ -31,6 +31,24 @@ pub fn run(name: &str, test: impl FnOnce(TestApp)) {
 pub fn right_click_editor(app: &TestApp) {
     right_click(app, "active_line");
 }
+pub fn toggle_sidebar(app: &TestApp, left: bool) {
+    let panel = if left {
+        "navigation_panel"
+    } else {
+        "comments_panel"
+    };
+    let shown = app
+        .widget_snapshot()
+        .iter()
+        .any(|w| w.id == panel && w.visible);
+    let button = match (left, shown) {
+        (true, true) => "toggle_navigation",
+        (true, false) => "expand_navigation",
+        (false, true) => "toggle_comments",
+        (false, false) => "expand_comments",
+    };
+    app.locator(Selector::id(button)).click();
+}
 pub fn right_click(app: &TestApp, target: &str) {
     let widgets = app.widget_snapshot();
     let editor = widgets.iter().find(|w| w.id == target).unwrap();
@@ -65,7 +83,7 @@ pub fn right_click(app: &TestApp, target: &str) {
         .iter()
         .any(|w| w.id == "comments_panel" && !w.visible)
     {
-        app.locator(Selector::id("toggle_comments")).click();
+        app.locator(Selector::id("expand_comments")).click();
     }
     app.locator(Selector::id("tab_comments")).click();
 }

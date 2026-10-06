@@ -27,6 +27,9 @@ script_mod! {
     mod.widgets.LiveEditor = #(LiveEditor::register_widget(vm)){
         width: Fill height: Fill
         list := PortalList{width: Fill height: Fill flow: Down keep_invisible: true selectable: false
+            scroll_bar +: {bar_size: 12.0 bar_side_margin: 2.0
+                draw_bg +: {size: 7.0 color: #x969ba5 color_hover: #x737b89 color_drag: #x566274 border_size: 0.0 border_radius: 3.5}
+            }
             Render := Line{}
             RenderHighlight := Line{}
             Blank := SolidView{width: Fill height: 24 draw_bg.color: #xffffff}
@@ -56,6 +59,7 @@ struct DragSelection {
     anchor_span: Option<(usize, usize)>,
     applied_anchor: Option<Cursor>,
     applied_cursor: Option<(DVec2, Cursor)>,
+    source_anchor: Option<usize>,
     released: bool,
 }
 #[derive(Script, ScriptHook, Widget)]
@@ -72,6 +76,15 @@ pub struct LiveEditor {
     focus_pending: bool,
     #[rust]
     canvas_focus_pending: bool,
+    /// Keyboard/input-only follow request. Mouse selection never sets it.
+    #[rust]
+    follow_caret: bool,
+    #[rust]
+    follow_layout_ready: bool,
+    #[rust]
+    scrollbar_gesture: bool,
+    #[rust]
+    cross_selection: Option<Range<usize>>,
     #[rust]
     cursor: usize,
     #[rust]
@@ -113,8 +126,9 @@ pub fn units(text: &str) -> Vec<Range<usize>> {
         // per-line table rows or unmatched code delimiters.
         let structural = blocks.iter().find(|b| b.start == offset).filter(|b| {
             let s = text[(*b).clone()].trim_start();
-            s.starts_with("```")
-                || s.starts_with("~~~")
+            ((s.starts_with("```") || s.starts_with("~~~"))
+                && crate::markdown_parse::unfinished_openers(s, pulldown_cmark::Options::empty())
+                    .is_empty())
                 || s.starts_with('|')
                 || s.starts_with("- ")
                 || s.starts_with("* ")
@@ -161,7 +175,105 @@ pub fn visible_units(text: &str) -> Vec<Range<usize>> {
 impl LiveEditor {
     /// Buffer both gesture endpoints across render→source layout. Native
     /// TextInput hit-testing is invoked locally, never OS/App event re-entry.
+    fn source_point(&self, cx: &mut Cx, point: DVec2) -> Option<(usize, usize)> {
+        let rows = self
+            .view
+            .portal_list(cx, ids!(list))
+            .borrow()?
+            .items()
+            .iter()
+            .map(|(id, e)| (*id, e.widget.clone()))
+            .collect::<Vec<_>>();
+        let (id, row) = rows
+            .iter()
+            .filter(|(id, _)| *id < self.ranges.len())
+            .min_by(|(_, a), (_, b)| {
+                let distance = |r: Rect| {
+                    if point.y < r.pos.y {
+                        r.pos.y - point.y
+                    } else if point.y > r.pos.y + r.size.y {
+                        point.y - r.pos.y - r.size.y
+                    } else {
+                        0.0
+                    }
+                };
+                distance(a.area().rect(cx)).total_cmp(&distance(b.area().rect(cx)))
+            })?;
+        let range = &self.ranges[*id];
+        if range.is_empty() {
+            return Some((*id, range.start));
+        }
+        if self.text[range.clone()].trim_start().starts_with('|') {
+            return None;
+        }
+        if self.active == Some(*id) {
+            let input = row.styled_input(cx, ids!(active_line));
+            let mut native = input.borrow_mut()?;
+            let down = self.drag.as_ref()?.down.clone();
+            let cursor = nearest_cursor(&mut native, cx, &down, point);
+            let projection = Projection::new(&self.text[range.clone()], true);
+            return projection
+                .source_cursor(cursor.index)
+                .map(|i| (*id, range.start + i));
+        }
+        row.child_by_path(ids!(rendered))
+            .borrow::<DocMarkdown>()?
+            .source_at_point(cx, point)
+            .map(|i| (*id, range.start + i))
+    }
     fn apply_drag(&mut self, cx: &mut Cx) -> bool {
+        if !self.focus_pending
+            && let Some(drag) = self.drag.clone()
+            && ((drag.cursor - drag.anchor).length() > 3.0 || self.cross_selection.is_some())
+            && (self.cross_selection.is_some()
+                || self
+                    .view
+                    .portal_list(cx, ids!(list))
+                    .borrow()
+                    .is_some_and(|list| {
+                        self.active
+                            .and_then(|id| list.items().get(&id))
+                            .is_some_and(|entry| {
+                                let rect = entry.widget.area().rect(cx);
+                                drag.cursor.y < rect.pos.y
+                                    || drag.cursor.y > rect.pos.y + rect.size.y
+                            })
+                    }))
+            && let Some((id, offset)) = self.source_point(cx, drag.cursor)
+        {
+            let anchor = drag.source_anchor.or_else(|| {
+                let active = self.active?;
+                let range = &self.ranges[active];
+                let index = drag.applied_anchor.map(|c| c.index).or_else(|| {
+                    self.source_point(cx, drag.anchor).map(|(_, i)| {
+                        Projection::new(&self.text[range.clone()], true)
+                            .visible_cursor(i - range.start)
+                    })
+                })?;
+                Projection::new(&self.text[range.clone()], true)
+                    .source_cursor(index)
+                    .map(|i| range.start + i)
+            });
+            if let Some(anchor) = anchor {
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.source_anchor = Some(anchor);
+                }
+                if self.cross_selection.is_some() || self.active != Some(id) {
+                    self.cross_selection = Some(anchor.min(offset)..anchor.max(offset));
+                    self.selected = self.cross_selection.clone();
+                    self.redraw(cx);
+                    if drag.released {
+                        cx.stop_timer(self.drag_timer);
+                        self.drag = None;
+                        cx.widget_action(
+                            self.widget_uid(),
+                            LiveAction::SelectionReady(drag.cursor),
+                        );
+                    }
+                    return true;
+                }
+            }
+        }
         if self.focus_pending {
             return false;
         }
@@ -269,6 +381,25 @@ impl LiveEditor {
         }
         true
     }
+    pub fn table_cell_at(&self, cx: &Cx, point: DVec2) -> Option<(Range<usize>, usize, usize)> {
+        if self.readonly {
+            return None;
+        }
+        let list = self.view.portal_list(cx, ids!(list));
+        let list = list.borrow()?;
+        for (id, entry) in list.items().iter() {
+            if let Some(markdown) = entry
+                .widget
+                .child_by_path(ids!(rendered))
+                .borrow::<DocMarkdown>()
+                && let Some((row, column)) = markdown.table_cell_at(cx, point)
+                && let Some(range) = self.ranges.get(*id)
+            {
+                return Some((range.clone(), row, column));
+            }
+        }
+        None
+    }
     pub fn cursor_offset(&self, cx: &Cx) -> Option<usize> {
         let range = self.ranges.get(self.active?)?;
         let input = self.input(cx)?;
@@ -294,6 +425,18 @@ impl LiveEditor {
         }
         self.redraw(cx);
     }
+    fn replace_selection(&mut self, cx: &mut Cx, range: Range<usize>, replacement: &str) {
+        if self.text.get(range.clone()).is_none() {
+            return;
+        }
+        let offset = range.start + replacement.len();
+        self.text.replace_range(range, replacement);
+        self.cross_selection = None;
+        self.selected = None;
+        self.ranges = visible_units(&self.text);
+        self.activate_at(cx, offset);
+        cx.widget_action(self.widget_uid(), LiveAction::Changed(self.text.clone()));
+    }
     fn replace_all(&mut self, cx: &mut Cx, text: &str) {
         self.update(cx, text);
         self.all_document = false;
@@ -312,6 +455,9 @@ impl LiveEditor {
             return;
         }
         self.text = text.to_owned();
+        self.cross_selection = None;
+        self.follow_caret = false;
+        self.follow_layout_ready = false;
         self.canvas_focus_pending = false;
         self.all_document = false;
         self.line_selected = false;
@@ -324,8 +470,10 @@ impl LiveEditor {
         self.redraw(cx);
     }
     pub fn deactivate(&mut self, cx: &mut Cx) {
+        self.follow_caret = false;
         self.canvas_focus_pending = false;
         self.selected = self.selection(cx);
+        self.cross_selection = None;
         self.active = None;
         self.focus_pending = false;
         cx.stop_timer(self.drag_timer);
@@ -338,6 +486,8 @@ impl LiveEditor {
     pub fn set_readonly(&mut self, cx: &mut Cx, value: bool) {
         self.readonly = value;
         if value {
+            self.follow_caret = false;
+            self.follow_layout_ready = false;
             cx.stop_timer(self.drag_timer);
             self.drag = None;
         }
@@ -398,9 +548,6 @@ impl LiveEditor {
         self.view.redraw(cx);
     }
     pub fn focused(&self, cx: &Cx) -> bool {
-        if self.all_document {
-            return true;
-        }
         self.input(cx)
             .is_some_and(|input| input.borrow().is_some_and(|i| i.key_focus(cx)))
             || self
@@ -424,6 +571,13 @@ impl LiveEditor {
             .map(|rect| rect.pos + dvec2(0.0, rect.size.y))
     }
     pub fn selection(&self, cx: &Cx) -> Option<Range<usize>> {
+        if self
+            .cross_selection
+            .as_ref()
+            .is_some_and(|r| r.start < r.end)
+        {
+            return self.cross_selection.clone();
+        }
         if self.all_document {
             return Some(0..self.text.len());
         }
@@ -520,6 +674,37 @@ impl Widget for LiveEditor {
         self.text.clone()
     }
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        if self.follow_caret
+            && let Some(active) = self.active
+        {
+            let viewport = self.view.area().rect(cx);
+            if viewport.size.y > 0.0 {
+                let list = self.view.portal_list(cx, ids!(list));
+                let on_screen = list.borrow().is_some_and(|list| {
+                    list.items().get(&active).is_some_and(|entry| {
+                        let rect = entry.widget.area().rect(cx);
+                        let input = entry
+                            .widget
+                            .child_by_path(ids!(active_line))
+                            .area()
+                            .rect(cx);
+                        input.size.y > 0.0
+                            && rect.size.y > 0.0
+                            && rect.pos.y >= viewport.pos.y + 4.0
+                            && rect.pos.y + rect.size.y <= viewport.pos.y + viewport.size.y - 48.0
+                    })
+                });
+                if !on_screen {
+                    let first = list.first_id();
+                    let offset = if active < first {
+                        4.0
+                    } else {
+                        (viewport.size.y - 48.0).max(0.0)
+                    };
+                    list.set_first_id_and_scroll(active, offset);
+                }
+            }
+        }
         while let Some(step) = self.view.draw_walk(cx, scope, walk).step() {
             if let Some(mut list) = step.as_portal_list().borrow_mut() {
                 list.set_item_range(cx, 0, self.ranges.len());
@@ -558,26 +743,53 @@ impl Widget for LiveEditor {
                                 native.set_body_font_size(cx, self.body() as f32);
                                 native.set_document_layout(cx, text);
                                 native.set_runs(cx, projection.runs.clone());
-                                native.comment_ranges = self
-                                    .highlights
-                                    .iter()
-                                    .filter_map(|h| {
-                                        let a = h.start.max(range.start);
-                                        let b = h.end.min(range.end);
-                                        (a < b)
-                                            .then(|| {
-                                                projection
-                                                    .visible_range(a - range.start..b - range.start)
-                                            })
-                                            .flatten()
-                                    })
-                                    .collect();
+                                native.set_comment_ranges(
+                                    cx,
+                                    self.highlights
+                                        .iter()
+                                        .filter_map(|h| {
+                                            let a = h.start.max(range.start);
+                                            let b = h.end.min(range.end);
+                                            (a < b)
+                                                .then(|| {
+                                                    projection.visible_range(
+                                                        a - range.start..b - range.start,
+                                                    )
+                                                })
+                                                .flatten()
+                                        })
+                                        .collect(),
+                                );
                             }
                             input.set_is_read_only(cx, self.readonly);
                             if self.all_document
                                 && let Some(mut native) = input.borrow_mut()
                             {
                                 native.select_all(cx);
+                            }
+                            if let Some(s) = &self.cross_selection {
+                                let a = s.start.max(range.start);
+                                let b = s.end.min(range.end);
+                                if let Some(s) = (a < b)
+                                    .then(|| {
+                                        projection.visible_range(a - range.start..b - range.start)
+                                    })
+                                    .flatten()
+                                {
+                                    input.set_selection_quiet(
+                                        cx,
+                                        Selection {
+                                            anchor: Cursor {
+                                                index: s.start,
+                                                prefer_next_row: false,
+                                            },
+                                            cursor: Cursor {
+                                                index: s.end,
+                                                prefer_next_row: false,
+                                            },
+                                        },
+                                    );
+                                }
                             }
                             row.draw_all_unscoped(cx);
                             if self.focus_pending {
@@ -604,6 +816,9 @@ impl Widget for LiveEditor {
                                     self.cursor_frame = cx.new_next_frame();
                                 }
                                 self.focus_pending = false;
+                                if self.follow_caret {
+                                    self.cursor_frame = cx.new_next_frame();
+                                }
                                 if self.drag.is_some() {
                                     self.cursor_frame = cx.new_next_frame();
                                 }
@@ -612,18 +827,30 @@ impl Widget for LiveEditor {
                             let markdown = row.doc_markdown(cx, ids!(rendered));
                             if let Some(mut widget) = markdown.borrow_mut() {
                                 crate::typography::apply(&mut widget, text, self.body() as f32);
-                                widget.comment_ranges = self
-                                    .highlights
-                                    .iter()
-                                    .filter_map(|h| {
-                                        let a = h.start.max(range.start);
-                                        let b = h.end.min(range.end);
+                                widget.set_comment_ranges(
+                                    cx,
+                                    self.highlights
+                                        .iter()
+                                        .filter_map(|h| {
+                                            let a = h.start.max(range.start);
+                                            let b = h.end.min(range.end);
+                                            (a < b).then_some(
+                                                a.saturating_sub(range.start)
+                                                    ..b.saturating_sub(range.start),
+                                            )
+                                        })
+                                        .collect(),
+                                );
+                                widget.editor_selection = true;
+                                widget.external_selection =
+                                    self.cross_selection.as_ref().and_then(|s| {
+                                        let a = s.start.max(range.start);
+                                        let b = s.end.min(range.end);
                                         (a < b).then_some(
                                             a.saturating_sub(range.start)
                                                 ..b.saturating_sub(range.start),
                                         )
-                                    })
-                                    .collect();
+                                    });
                                 widget.document_selected = self.all_document;
                                 widget.editable_table = true;
                                 widget.editor_readonly = self.readonly;
@@ -637,6 +864,10 @@ impl Widget for LiveEditor {
                 }
             }
         }
+        if self.follow_caret {
+            self.follow_layout_ready = true;
+            self.cursor_frame = cx.new_next_frame();
+        }
         DrawStep::done()
     }
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
@@ -645,6 +876,25 @@ impl Widget for LiveEditor {
             && !self.readonly
         {
             cx.widget_action(self.widget_uid(), LiveAction::UndoRequested);
+            return;
+        }
+        let scrollbar_press = matches!(event,Event::MouseDown(mouse) if mouse.button==MouseButton::PRIMARY && {
+            let viewport=self.view.area().rect(cx);
+            viewport.contains(mouse.abs) && mouse.abs.x>=viewport.pos.x+viewport.size.x-12.0
+        });
+        if scrollbar_press
+            || (self.scrollbar_gesture && matches!(event, Event::MouseMove(_) | Event::MouseUp(_)))
+        {
+            self.follow_caret = false;
+            self.drag = None;
+            cx.stop_timer(self.drag_timer);
+            if scrollbar_press {
+                self.scrollbar_gesture = true;
+            }
+            self.view.handle_event(cx, event, scope);
+            if matches!(event, Event::MouseUp(_)) {
+                self.scrollbar_gesture = false;
+            }
             return;
         }
         if let Event::MouseDown(mouse) = event
@@ -675,6 +925,9 @@ impl Widget for LiveEditor {
                 return;
             }
         }
+        if matches!(event, Event::MouseDown(_) | Event::Scroll(_)) {
+            self.follow_caret = false;
+        }
         if matches!(event, Event::MouseDown(_)) {
             // A newer click cancels the one-shot canvas focus hand-off,
             // so a fast subsequent click in title/comments is not stolen.
@@ -685,7 +938,55 @@ impl Widget for LiveEditor {
             self.drag = None;
             cx.stop_timer(self.drag_timer);
         }
-        if self.all_document {
+        if let Some(range) = self.cross_selection.clone() {
+            match event {
+                Event::TextCopy(copy) | Event::TextCut(copy) if self.focused(cx) => {
+                    *copy.response.borrow_mut() = self.text.get(range.clone()).map(str::to_owned);
+                    if matches!(event, Event::TextCut(_)) && !self.readonly {
+                        self.replace_selection(cx, range, "");
+                    }
+                    return;
+                }
+                Event::TextInput(input)
+                    if !self.readonly
+                        && self.input(cx).is_some_and(|input| {
+                            input.borrow().is_some_and(|native| native.key_focus(cx))
+                        }) =>
+                {
+                    self.replace_selection(cx, range, &input.input);
+                    return;
+                }
+                Event::KeyDown(key)
+                    if matches!(key.key_code, KeyCode::Backspace | KeyCode::Delete)
+                        && !self.readonly
+                        && self.focused(cx) =>
+                {
+                    self.replace_selection(cx, range, "");
+                    return;
+                }
+                Event::MouseDown(_) => {
+                    self.cross_selection = None;
+                    self.redraw(cx);
+                }
+                Event::KeyDown(key)
+                    if select_all_key(key)
+                        && self.input(cx).is_some_and(|input| {
+                            input.borrow().is_some_and(|native| native.key_focus(cx))
+                        }) =>
+                {
+                    self.cross_selection = None;
+                    self.all_document = true;
+                    self.redraw(cx);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if self.all_document
+            && self
+                .input(cx)
+                .is_some_and(|input| input.borrow().is_some_and(|native| native.key_focus(cx)))
+        {
             match event {
                 Event::TextCopy(copy) | Event::TextCut(copy) => {
                     *copy.response.borrow_mut() = Some(self.text.clone());
@@ -790,6 +1091,32 @@ impl Widget for LiveEditor {
                         native.redraw(cx);
                     }
                 }
+            }
+            if self.follow_caret
+                && self.follow_layout_ready
+                && self.cursor_frame.is_event(event).is_some()
+                && !self.focus_pending
+                && let Some(input) = self.input(cx)
+                && let Some(caret) = input.cursor_rect_in_absolute(cx)
+            {
+                let viewport = self.view.area().rect(cx);
+                let delta = if caret.pos.y < viewport.pos.y + 6.0 {
+                    viewport.pos.y + 6.0 - caret.pos.y
+                } else if caret.pos.y + caret.size.y > viewport.pos.y + viewport.size.y - 6.0 {
+                    viewport.pos.y + viewport.size.y - 6.0 - caret.pos.y - caret.size.y
+                } else {
+                    0.0
+                };
+                if delta.abs() > 0.5 {
+                    let list = self.view.portal_list(cx, ids!(list));
+                    if let Some(mut native) = list.borrow_mut() {
+                        let id = native.first_id();
+                        let offset = native.first_scroll();
+                        native.set_first_id_and_scroll(id, offset + delta);
+                        native.redraw(cx);
+                    }
+                }
+                self.follow_caret = false;
             }
             if self.canvas_focus_pending
                 && let Some(input) = self.input(cx)
@@ -930,6 +1257,7 @@ impl Widget for LiveEditor {
                         anchor_span,
                         applied_anchor: None,
                         applied_cursor: None,
+                        source_anchor: None,
                         released: false,
                     });
                     return;
@@ -995,6 +1323,23 @@ impl Widget for LiveEditor {
                 if next != id || self.ranges[next].len() != replacement.len() {
                     self.focus_pending = true;
                 }
+                self.follow_caret = true;
+                self.follow_layout_ready = false;
+                // Resolve a newly split row before virtualization can omit it.
+                // Old input geometry is valid at this event; the new row has
+                // no Area yet and waiting for its caret deadlocks below view.
+                let viewport = self.view.area().rect(cx);
+                let old = input.area().rect(cx);
+                if next != id
+                    && viewport.size.y > 0.0
+                    && (old.pos.y + old.size.y + 32.0 > viewport.pos.y + viewport.size.y - 12.0
+                        || old.pos.y < viewport.pos.y)
+                {
+                    self.view
+                        .portal_list(cx, ids!(list))
+                        .set_first_id_and_scroll(next, (viewport.size.y - 60.0).max(0.0));
+                }
+                self.view.portal_list(cx, ids!(list)).redraw(cx);
                 self.selected = None;
                 cx.widget_action(self.widget_uid(), LiveAction::Changed(self.text.clone()));
                 self.redraw(cx);
@@ -1031,6 +1376,8 @@ impl Widget for LiveEditor {
                 && !key.modifiers.shift
             {
                 self.activate(cx, id - 1, true);
+                self.follow_caret = true;
+                self.follow_layout_ready = false;
                 return;
             }
             if key.key_code == KeyCode::ArrowDown
@@ -1039,6 +1386,8 @@ impl Widget for LiveEditor {
                 && !key.modifiers.shift
             {
                 self.activate(cx, id + 1, false);
+                self.follow_caret = true;
+                self.follow_layout_ready = false;
                 return;
             }
             if key.key_code == KeyCode::Backspace

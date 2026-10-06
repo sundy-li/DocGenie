@@ -96,11 +96,13 @@ fn duplicate_formatted_paragraph_highlight_and_cards() {
         assert!(yellow > 1000, "comment highlight must render yellow pixels");
         println!("highlight+cards: {}", screenshot.display());
         app.locator(Selector::id("thread_resolve_toggle")).click();
-        app.locator(Selector::id("thread_state"))
-            .wait_text("已解决 · 不再自动处理");
+        app.locator(Selector::id("filter_resolved"))
+            .wait_text("已解决 1");
+        app.locator(Selector::id("filter_resolved")).click();
         app.locator(Selector::id("badge").nth(0)).wait_hidden();
         // Reopen by clicking the same checkmark.
         app.locator(Selector::id("thread_resolve_toggle")).click();
+        app.locator(Selector::id("filter_open")).click();
         app.locator(Selector::id("badge").nth(0)).wait_visible();
     });
 }
@@ -128,7 +130,7 @@ fn edited_anchor_can_be_explicitly_rebound() {
         app.locator(Selector::id("thread_state"))
             .wait_text("原段落已变化 · 请重新绑定");
         // The overview keeps stable thread IDs after a document edit.
-        app.locator(Selector::id("thread_open")).click();
+        app.locator(Selector::id("quote_jump")).click();
         app.locator(Selector::id("rendered").nth(0))
             .wait_visible()
             .click();
@@ -147,6 +149,7 @@ fn edited_anchor_can_be_explicitly_rebound() {
         // Auto-focus: switching to preview reveals the rebind target.
         app.locator(Selector::id("mode_edit")).click();
         app.locator(Selector::id("live_editor")).wait_hidden();
+        app.locator(Selector::id("filter_open")).click();
         app.locator(Selector::id("badge").nth(0)).wait_visible();
     });
 }

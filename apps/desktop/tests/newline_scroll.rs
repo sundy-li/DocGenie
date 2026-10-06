@@ -57,6 +57,36 @@ fn repeated_enter_keeps_caret_visible_and_shows_document_scrollbar() {
         source.push('\n');
         app.type_text("保存后继续");
         source.push_str("保存后继续");
-        app.locator(Selector::id("live_editor")).wait_text(source);
+        app.locator(Selector::id("live_editor")).wait_text(&source);
+        // Drag the actual scrollbar track, not a synthetic list reposition.
+        let snap = app.widget_snapshot();
+        let viewport = snap.iter().find(|w| w.id == "live_editor").unwrap();
+        let x = (viewport.x + viewport.width - 6) as f64;
+        let y = (viewport.y + viewport.height - 45) as f64;
+        app.forward(vec![
+            makepad_test::StudioToApp::MouseDown(makepad_test::RemoteMouseDown {
+                button_raw_bits: makepad_test::MouseButton::PRIMARY.bits(),
+                x,
+                y,
+                time: 2.0,
+                modifiers: Default::default(),
+            }),
+            makepad_test::StudioToApp::MouseMove(makepad_test::RemoteMouseMove {
+                x,
+                y: viewport.y as f64 + 10.0,
+                time: 2.2,
+                modifiers: Default::default(),
+            }),
+            makepad_test::StudioToApp::MouseUp(makepad_test::RemoteMouseUp {
+                button_raw_bits: makepad_test::MouseButton::PRIMARY.bits(),
+                x,
+                y: viewport.y as f64 + 10.0,
+                time: 2.3,
+                modifiers: Default::default(),
+            }),
+        ]);
+        app.locator(Selector::id("rendered").text_exact("起点"))
+            .wait_visible();
+        app.locator(Selector::id("live_editor")).assert_text(source);
     });
 }

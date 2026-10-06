@@ -2,21 +2,78 @@
 
 项目对外名称为 DocGenie，桌面 package / binary 为 `docgenie-desktop`。旧 vault `~/.agent-docs/`、Preferences 路径和 `AGENT_DOCS_*` 环境变量保持兼容。
 
+## 表格增删行列（当前增量）
+
+- 编辑模式单元格右键原生TableMenu：上方/下方新增行、删除行、左侧/右侧新增列、删除列。命中真实cell native区域，通过Table::position得到row/column；target绑定完整table source range与revision，不用文本搜索。阅读/readonly不提供结构菜单，切模式/文档关闭旧menu；opener释放/菜单pointer分离。
+- 纯Rust document-core::table定义受限Command、表格结构parser与Workbench::edit_table；新增列同步header/delimiter/body，保留其它cell原byte内容（格式、URL、转义pipe、CRLF、列对齐），新增body行不替换header。删除表头/最后列拒绝，删最后数据行允许header-only表；默认最多64列/4096数据行。每个命令fresh revision检查，然后标准Workbench edit/revision/undo/锚点失效/3s保存路径。
+- 当前支持显式首尾pipe、列数一致、有效alignment separator的表格。不支持不规则行/无outer pipe、排序/移动/复制/整表删除，菜单不提供无效项。单元格仍不允许原始pipe/换行，转义pipe原文结构不丢失。
+- 新core table测试覆盖插入/删除/undo/拒绝/conflict/邻段/CRLF，GUI table_edit依次六操作、禁用header/last column、单元格后续输入、header-only保存重启与reading只读；菜单原生截图已查看。
+
+## 未闭合代码围栏编辑（当前修复）
+
+- `markdown_parse.rs` 在显示层调整 CommonMark 未闭合 fenced block 的行为：没有匹配 closing fence 时，opening line 与后续内容按普通 Markdown 正文呈现，不能吞到文末；输入同类型且长度不少于 opening 的独立结束行后，恢复代码渲染。支持顶层 ``` / ~~~、语言标记、0–3空格缩进，过短/不同符号/附正文的行不关闭。
+- parser buffer仅以等长ASCII替换未闭合opening marker，用原文恢复Text event与原byte offsets，绝不保存该buffer；edit_projection / DocMarkdown / Reading block_ranges使用同一events契约。LiveEditor不把未闭合opening文本作为原子代码单元，新输入继续真实行编辑；closed block仍保持结构单元。不执行runsplash。
+- 单元覆盖中文/emoji原文offset、无结束/更短/合法更长fence，原生fence_live逐字 ```、输入正文、再逐字结束、失焦代码与后续正文独立通过；嵌套list/blockquote fence、超长多层结构仍需专项。
+
+## 图标操作 / hover 提示 / 侧栏归位 / 完成高亮（当前增量）
+
+- 常用操作统一线性 SVG 图标：评论回复 send、解决 check-circle / 重开 reopen、修改对比 chevron-down / up、评论上一条/下一条、新评论、编辑/阅读切换。新建和搜索保留图标+文字，主新建蓝色底，关键状态文字不隐藏；危险删除保留确认流程。
+- `UiHint` 原生非交互 overlay，悬停 400ms 后显示深色提示，离开、点击、滚动、键盘、窗口重排关闭。引用定位、diff展开/收起、发送、解决/重开、侧栏、撤销、停止、文件操作有明确提示；不抢焦点，不改正文。未宣称OS screen-reader完整验收。
+- 修改对比图标只有 before!=after 可见，click沿原 thread ID切换展开，不调用模型；SVG状态只在改变时script apply，不每帧重新求值。
+- 左右collapse移至各侧栏顶部内侧，center toolbar不再放这两项；隐藏后保留36pt边缘rail的展开入口。宽度策略/草稿/窄窗口行为不变，增加严格坐标断言。
+- 黄色文字band只表示未解决、未处理、当前revision的评论。resolved与processed任一成立均移除；对同位置其它未处理线程保留。DocMarkdown与StyledInput使用set_comment_ranges刷新原生子组件，避免正文未变化时缓存滞留。已处理仍与resolved独立，卡片继续可回复。
+
+## Agent 工作动画 / 无改动对比 / 已处理标记（当前增量）
+
+- 卡片 busy（Queued / Preparing / Waiting / Validating）显示紫色原生 LoadingSpinner 与“Agent 正在处理…”，具体请求阶段继续在下一行展示。shader 使用 draw_pass.time 绘制旋转圆弧，不模拟百分比；完成 / 失败 / 取消后隐藏图标，普通本地评论不动画。不修改 runtime。
+- 最近 change.before == change.after 时隐藏 view_change 按钮与展开面板（包括已有旧 no-op 记录），保留 Agent 回复 / 完成状态。解释型成功结果不 commit 相同正文，不增加正文 revision / undo；元数据与消息仍通过原 debounce 保存。
+- CommentThread processed_round optional 字段标记成功处理，独立于人工 resolved；失败 / 过期 / 取消不标。追加用户回复或显式 rebind 清待处理标记，解决 / 重开不伪造新 Agent 完成。卡片顶部绿色“已处理”，保存重启恢复；兼容旧 last_change 成功记录的当前轮次推导，无字段普通评论保持未处理。
+- 像素专项验证 spinner 有紫色 ink 且两帧不同；解释型 HTTP Mock 验证正文/revision不变、没有diff入口与面板、已处理及重启恢复。状态仍取真实 Agent events；动画不代表 token streaming / 原文已授权。
+
+## 跨正文块选区 / 标签菜单生命周期（当前增量）
+
+- LiveEditor 拖选跨块时用 source_anchor + global source range 维护共享选区，不合并输入 / 重排 block；端点来自活动 StyledInput native hit-test 或 rendered DocMarkdown source runs，保留中间 newline。每块按实际 source overlap 绘制浅色 band，起止块仅选中文字、中间块完整选中。
+- 跨普通正文段落支持正反拖选、输入替换、Delete/Backspace、copy/cut（原生系统 clipboard 仍需人工验收）、精确评论与 Workbench undo；跨多块之后 Ctrl/⌘A 转整篇选择。Reading 同样支持普通正文跨段落拖选与精确评论，仍只读。素材不经搜索猜重复文本位置。
+- cross range 不提供写权限：TextInput / Delete / clipboard 仅实际正文 native key focus处理，评论 / 设置输入不会被保留 selection抢走；普通 MouseDown 清跨块状态。复杂 table/coded child gap、图片或链接 glyph端点无法安全映射暂不支持，不把不确定点静默扩段落。
+- TabMenu 与 App 统一 dismiss 契约：打开右键 MouseUp 消费不透传，惯性 Scroll冻结底层但不隐藏菜单，modifier不关闭。选择操作、外部 MouseDown、Escape才关闭；保持 close scopes / flush / conflict barrier不变。tab_actions增加惯性与modifier/Escape外点回归。
+
+## 线程 Agent 进度与选区修改对比（当前增量）
+
+- 评论卡片内紫色状态条显示真实 host/transport milestones：排队、准备选区与评论、等待 AI 回复、响应返回后校验、成功应用后完成。没有模拟百分比或模型 reasoning 展示；非 streaming chat-completions 不承诺 token 级进度。失败 / 取消 / 过期独立状态，完成不是 resolved，只有人工解决评论才移动过滤。
+- worker 发 Progress/Finished 事件带 epoch、文档 UUID、thread ID 与 round；UI 按隔离标识接收，Signal 不改权限。完成仍通过 comment_request fresh revision/round/text 与 schema 校验。状态只在 session 内，重启不复活进行中网络任务；成功已处理标记从 processed_round（或旧 last_change 当前轮次）恢复。
+- `CommentThread.last_change` optional DTO 保存最近一次成功应用的精确选区 before / after、base_revision / applied_revision / round；core 与正文修改/Agent 回复在 candidate 中原子提交，结果失败或冲突不产生记录。计入 MAX_STATE_BYTES、文本上限与 restore 校验；兼容旧无字段快照，不修改旧线程。
+- 卡片正文发生实际变化时“查看本次修改”展开原生只读红/绿修改前后对比和 revision，按 thread ID 保存展开状态。撤销 / 后续编辑后标明历史修改，不把历史文本当当前真值，也不提供未授权 apply。当前每个线程只保留最近一次成功 AI 修改，不是全版本管理，非逐词 inline diff。
+
+## 完整评论线程卡片（当前增量）
+
+- 右栏改为单一 PortalList 滚动的完整线程卡片，不再分线程摘要 / 当前详情两个区域。每张白色边框卡片含灰色原文摘要、全部消息（作者 / 时间 / 正文），活动卡片顶部 5pt 黄色标识和卡片内回复框。保留未解决 / 已解决筛选、线程前后切换和新评论入口，不改变精确锚点或模型授权。
+- `ThreadList` 从 Workbench 派生完整 messages，以 index 对接外层虚拟列表，同时用稳定 thread ID 路由 quote / resolve / reply / rebind。筛选改变时重新绑定 index→thread ID；App 按 thread ID 保留草稿，文档切换清空。普通 redraw 不 set_text 回旧 draft，避免丢输入 / undo / IME。
+- `Discussion` 改为 Fit 高度原生消息 View，无嵌套 PortalList；从受信任 script message_template 实例化消息，插入后标记 widget tree dirty。消息不执行 runsplash。所有消息撑开卡片，长列表由外层滚动。
+- 灰色原文点击选择卡片并按有效锚点定位；各卡片解决 / 重开、活动卡片回复走原 Workbench / stamp / debounce / Agent 许可。过期提示与显式重绑保留，读取 / 切换期间卡片回复只读。resolved 卡片没有回复框。
+- 单机作者仍为“你” / “Agent”，头像为紫色作者标记。不绘制无效附件上传 / 分享链接；真实 AI 状态条已接入。
+
+## 引用块高亮 / 连续换行与滚动条（当前修复）
+
+- Markdown `>` 引用背景原先复用了黄色 theme highlight，造成精确部分评论仍看起来整块变黄。`DocMarkdown.draw_block.quote_bg_color` 改中性浅灰 `#f5f6f8`，黄色只来自有效 comment source range 的文字 band；不修改引用正文或已有评论锚点。
+- 连续 Enter 新活动行越出可视区，PortalList 不绘制该行，pending focus 无法交接。输入事件在 split 后依据旧行 geometry 预先滚入新行，draw / next-frame 再检查实际 caret；仅键入与键盘上下移动 follow，布局完成前不读旧 caret cache。普通鼠标激活 / 选区 / Scroll 取消 follow，不破坏 20pt 拖选边缘规则。
+- 编辑 / 阅读原生 PortalList scrollbar 使用可见灰色 handle（7pt，hover/drag 加深），溢出时显示，短文无无效轨道。编辑器右侧 12pt scrollbar gesture 优先交给 native list，避免 pointer 被行选区接管。
+- `newline_scroll` 每次 Enter 检查活动输入仍在视口，38 次换行、尾部写字、保存后继续、实际鼠标拖 scrollbar 回到开头；`quote_highlight` 测试长引用部分评论，编辑 / 阅读像素核对黄色面积显著小于中性背景并检查全文不变。
+
 ## 精确选区评论 / 文档撤销 / 评论元信息（当前增量）
 
 - 评论入口不再调用 comment_block：活动编辑的 visible→source range 直接作为评论锚点，读模式通过实际 TextFlow event source runs 与 pointer indices 映射。不靠全文搜索、不扩段落 / 列表 / 表格；无法安全映射的 child gap / decoded entity 拒绝，不偷偷改成整块。选中完整粗斜体 run 的读模式范围包含其 paired delimiter，部分 run 仍只引用内文；链接 label 不包含 URL。
 - unresolved 且 current revision 评论以选中文字 band 高亮，不使用 RenderHighlight / ActiveHighlight / reading Highlight 全块底色。普通 / 粗斜体渲染按 comment range 拆 run，原生活动输入按 projection 画 band；网格 cell 也按 source range 投影。复杂 code/image/link 子控件仍有局部绘制限制，非所有 Markdown inline 高亮验收。
 - 正文 Ctrl/⌘Z 统一发送 LiveAction::UndoRequested 走 Workbench，不在活动 native history 与文档 history 来回切换。格式工具 / 跨行 / AI 与普通输入共享 domain undo，失焦 / 阅读也可用；成功后恢复活动行焦点、UTF-8 安全 cursor，debounce 保存。title_input、评论草稿与 Settings 仍原生局部撤销，不误撤正文；redo 及 composition 完整专项尚未完成。
 - `Message.author` / `created_at` 为 optional serde 字段兼容旧元数据；App 在用户 / Agent 消息成功追加后传入作者与 Unix 秒时间，core 不读取时钟 / 系统用户，校验限额、不改变 range/revision/round。旧消息显示“时间未知”，不伪造创建时间。单机无登录身份：作者为“你” / “Agent”。
-- 灰色 `CommentQuote` 显示 46 字符缩略摘要；完整原文仍用于语义 / 锚点，不塞进只读输入。点击 quote_jump 或线程摘要定位有效锚点，过期锚点拒绝定位；Discussion 消息显示紫色作者标识、作者与本地月日时分，线程摘要也有作者 / 时间。保留线程列表 + 当前详情结构，未实现每个线程独立内联回复输入框或参考图中等待 AI 状态条。
+- 灰色 `CommentQuote` 显示 46 字符缩略摘要；完整原文仍用于语义 / 锚点，不塞进只读输入。点击 quote_jump 或线程摘要定位有效锚点，过期锚点拒绝定位；Discussion 消息显示紫色作者标识、作者与本地月日时分，线程摘要也有作者 / 时间。已改为完整线程卡片列表与活动卡片内联回复框；真实等待 AI 状态条已接入，不模拟 token 进度。
 
 ## macOS 菜单 / 三栏标签 / 选区滚动（当前增量）
 
 - `ui.rs` 配置原生 WindowMenu：DocGenie → Settings…（⌘,）打开既有全局设置，重复触发保持打开；macOS 隐藏工具栏 settings icon，其他平台保留。不是窗口内 MenuBar 模拟。Quit DocGenie 走系统 QuitRequested，dirty / worker busy 延后退出待 flush；错误取消退出。原生菜单点击和系统退出仍需人工验收，快捷键和 Settings 页面已 GUI 回归。
-- page 为左 navigation / 中 center_panel / 右 comments：`center_toolbar` 与可横向滚动的 `tab_strip` 仅位于中栏。固定 `toggle_navigation` / `toggle_comments` 两按钮始终可见，复用窄窗口侧栏策略，移除分散的 collapse / expand 图标。正文限宽不变。
+- page 为左 navigation / 中 center_panel / 右 comments：`center_toolbar` 与可横向滚动的 `tab_strip` 仅位于中栏。`toggle_navigation` / `toggle_comments` 位于侧栏顶部，隐藏侧栏后显示边缘rail的expand入口，复用窄窗口策略。正文限宽不变。
 - `TabMenu` 根据右键目标 rel（不是当前文档）展示关闭 / 关闭左侧 / 关闭其他 / 关闭所有。关闭计划在纯 `tabs.rs`，active 被关闭时 `pending_tabs` + readonly + save barrier；保存失败不移除标签。flush 完成才更新标签与下一文档 / 空工作台；只关闭视图不删除文件。自动 H1 重命名同步 pending rel。
 - 无标签时显示空工作台（新建 / 打开），Settings 和左文件树仍可用；右键操作外点 / Escape 收起，失效命中不可触发。完整规则、坐标约束、dirty 全关保存与重开回归见 `tests/tab_actions.rs`。
-- 编辑选区仅顶部 / 底部 20 逻辑点启用边缘滚动。中间拖选与已选中时中间滚轮不滚动；使用 quiet selection，禁用 PortalList 自行选择接管。边缘 interval 驱动同一个 list offset，松开 / 模式切换 / readonly / 新正文停止 timer。范围仍限单个呈现单元，不宣称跨块拖选已实现。阅读选区阻止中间滚轮，同样保留边缘滚动。
+- 编辑选区仅顶部 / 底部 20 逻辑点启用边缘滚动。中间拖选与已选中时中间滚轮不滚动；使用 quiet selection，禁用 PortalList 自行选择接管。边缘 interval 驱动同一个 list offset，松开 / 模式切换 / readonly / 新正文停止 timer。普通正文跨块拖选已支持；复杂结构端点仍不属于全面验收。阅读选区阻止中间滚轮，同样保留边缘滚动。
 - GUI 测试默认全流程 debug：`just ui` / `just render` → `tools/test-ui-debug.py`，测试进程 CARGO adapter 绕过 pinned makepad-test 内部 --release，不修改 runtime。操作说明与限制见 `docs/ui-development.md`。
 
 ## 顶部标题与正文标题输入修复（已实现）
@@ -31,7 +88,7 @@
 - StyledInput 原生选区改为浅青色 `#e1efed`、直角、纯色；相邻 visual rows 的选区衔接，仍按每行实际选中文字宽度收尾，不画整块灰色圆角背景。活动块恢复白底，批注黄色高亮保留。
 - 第二次 Ctrl/⌘A 使用 Rust `all_document` 共享范围，不重建 `ranges` / 合并全文输入：PortalList 保持原有活动行、正文、标题、列表、表格与图片布局。DocMarkdown 的实际行绘制 area 画浅色 band（包括列表 marker），表格由 cell input 画；顶部标题原位置高亮，不重复呈现。新增严格坐标 / height / per-block 像素回归。
 - 浅色 opaque 选区先画、字形后画，避免重用 append draw-call 后高亮盖住文字（Metal 截图已发现并修正）。像素测试同时检验浅青色 band 和文字 ink，不能仅根据 buffer / selection 状态判定视觉通过。
-- 全选时复制 / 剪切输出完整 Markdown 原文；输入 / Delete / Backspace 替换完整 source，并经 LiveAction → Workbench → debounce 保存。保持布局与全篇替换 / 删除 / undo / 评论已回归；standalone GUI harness 不支持 clipboard forward，系统剪贴板 copy/cut 仍需人工验收。任意跨块拖选尚未实现；此能力不等于完整 Obsidian 内核。
+- 全选时复制 / 剪切输出完整 Markdown 原文；输入 / Delete / Backspace 替换完整 source，并经 LiveAction → Workbench → debounce 保存。保持布局与全篇替换 / 删除 / undo / 评论已回归；standalone GUI harness 不支持 clipboard forward，系统剪贴板 copy/cut 仍需人工验收。普通正文跨块拖选已支持，复杂混合结构端点仍有边界；此能力不等于完整 Obsidian 内核。
 
 ## UI 开发热重载与字体接续
 
@@ -60,8 +117,8 @@
 - `styled_input.rs` 为 App-owned pinned TextInput 派生组件，保留原生 IME、caret、selection、history，使用 `styled_layout.rs` 绘制粗体 / 斜体 / code / 蓝色链接 / 蓝色标题；未修改 `.runtime/`。派生声明见 THIRD_PARTY_NOTICES。
 - 正文蓝色标题仅在获得编辑焦点时显示 ATX `#`；首个 H1 的独立 title_input 是例外，始终蓝色纯标题，不显示前缀。保存同步时跳过焦点输入与已保存标题仅首尾空白不同的重写。正文获焦点不露 `**`、`[label](URL)` 或代码 delimiters。编辑中普通点击链接是编辑文字，⌘/Ctrl+点击打开；阅读模式单击打开。
 - pipe 开头的表格保持原生 TextFlow 网格，通过独立 StyledInput 编辑单元格，保留原 delimiter、空白、邻格和列对齐；不切成整块源码。锁定保存 / 切换期间同步只读单元格与标题。
-- 同格式 run 编辑、完整 inline 容器替换与全选替换支持；部分跨格式和解码实体修改尚不支持，拒绝而不损坏原文。两阶段全选共享完整 source range，保留各块呈现，不暴露整篇源码。任意跨块拖选、共享跨块撤销、列表活动块的完整 bullet 布局、RTL 与完整中文 IME 验收仍未实现。
-- 表格暂不支持增删行列与单元格原始 pipe / 换行输入。复杂语法不是完整富文本承诺；系统截图附件插入的人工流程仍需回归。当前增量验证结果见 validation.md。
+- 同格式 run 编辑、完整 inline 容器替换与全选替换支持；部分跨格式和解码实体修改尚不支持，拒绝而不损坏原文。两阶段全选共享完整 source range，保留各块呈现，不暴露整篇源码。普通正文跨块拖选与 domain 撤销已支持，任意复杂混合结构端点、统一 native redo、RTL 与完整中文 IME 验收仍未完成。
+- 表格增删行列已通过受限右键菜单支持；仍不支持单元格原始 pipe / 换行输入、排序/移动/复制。复杂语法不是完整富文本承诺；系统截图附件插入的人工流程仍需回归。当前增量验证结果见 validation.md。
 - 旧文档中涉及活动源码的描述是历史实现，不代表当前交互；下文已更新主要契约。
 
 ## UI/UX：第一轮工作台 / 评论增量（已实现）
@@ -75,7 +132,7 @@
 - 大纲跳转不再强制切换编辑模式：阅读模式调用 `Reading::reveal`，编辑模式调用 `LiveEditor::activate_at`。
 - 新增 `tests/workspace.rs`：限宽 / 居中 / 左右栏组合、搜索入口、阅读大纲跳转、900 宽度收栏与草稿、线程概览 / 筛选 / 解决重开 / 同段多线程 / 独立草稿。
 
-仍未完成：条目级更多菜单、目录刻度浮层、长标题自动换行、全部线程完整内联回复卡片、thread 级 Agent 状态、历史快照、跨块选区与全部 Markdown 语法的精确 inline 批注。本轮是 P1 / P2 的首个增量，不代表整体设计路线完成。验证结果见 `docs/validation.md`。
+仍未完成：条目级更多菜单、目录刻度浮层、长标题自动换行、完整历史快照、复杂混合结构的跨块选区与全部 Markdown 语法的精确 inline 批注。本轮是 P1 / P2 的首个增量，不代表整体设计路线完成。验证结果见 `docs/validation.md`。
 
 ## Feishu 风格交互（已落地）
 
@@ -110,10 +167,10 @@
 ### 评论与 Agent
 
 - 编辑/阅读模式均支持选区右键原生 overlay 菜单「添加段落批注」，保留选区并聚焦右侧评论框。
-- 阅读布局按 parser top-level byte ranges 分块，评论通过绘制 source runs 映射精确选中字节；编辑评论保留 projection 精确范围。不扩整段 / 列表 / 表格，也不通过搜索重复文字猜位置。复杂 child 映射不支持时拒绝，而非扩大选区。阅读仍不支持跨块选区。
+- 阅读布局按 parser top-level byte ranges 分块，评论通过绘制 source runs 映射精确选中字节；编辑评论保留 projection 精确范围。不扩整段 / 列表 / 表格，也不通过搜索重复文字猜位置。复杂 child 映射不支持时拒绝，而非扩大选区。普通正文阅读跨段落选择已支持；复杂结构端点仍未全面验收。
 - 本地多轮评论、逐条原生消息卡片（User/Agent 视觉区分）、解决/重新打开、前后切换、保存恢复。
 - 阅读模式未解决且有效的批注选中文字持续淡黄高亮，点击段落或「查看批注」打开线程；上一条/下一条切换或点开线程时，自动按当前编辑器模式 reveal：阅读模式滚动到高亮块，编辑模式跳到该块，原文变化则显示「原段落已变化」并保持当前选区等待重新绑定；不再需要「定位原文」按钮。
-- 自动修改仅在 Preferences（⌘,）中作为「默认启用 Agent 自动修改」开关存在；评论侧栏不再承载这一配置项；开启后发送评论/回复自动触发，精确选区与线程是唯一外发上下文。Agent 状态只在工具栏「停止 Agent」按钮和底部 status_label 反映。
+- 自动修改仅在 Preferences（⌘,）中作为「默认启用 Agent 自动修改」开关存在；评论侧栏不再承载这一配置项；开启后发送评论/回复自动触发，精确选区与线程是唯一外发上下文。Agent 状态在对应线程卡片实时显示，工具栏保留「停止 Agent」，底部 status_label 补充结果。
 - default MiniMax endpoint 为 `https://api.minimaxi.com/v1/chat/completions`，model `minimax-m3`。实测服务返回 `MiniMax-M3`。
 - 密钥优先环境，fallback 只解析 `.zshrc` 字面量赋值，不执行 shell；key 不入日志、文件或 JSON 元数据。
 - provider reasoning_split 与 JSON response_format，严格 replacement/explanation，支持 fenced JSON 与完整 think 前缀移除；非法结果不写入。
@@ -146,7 +203,7 @@ Ctrl+A / Cmd+A 两阶段：第一次选当前显示行，连续再次按选择�
 
 当前不是完整 Obsidian：除两阶段全文 selection 外，实时预览任意跨行 selection、跨行 native undo 共享栈、复杂结构逐行折叠、剪贴板富格式、窄窗口与 IME 人工验收仍未完成；源码模式已移除。
 
-白底三栏沿用用户参考图：我的文档/大纲，Markdown 文档，本地评论。顶部独立开关可收起/展开左右侧栏，中间编辑/阅读区域自动填满释放的空间。隐藏保留评论草稿与线程，右键添加批注自动展开评论栏；当前会话保持布局，重启默认全部展开。原生 Markdown 的 runsplash 块只显示文本。右键菜单可 Escape/外部点击/滚动关闭。
+白底三栏沿用用户参考图：我的文档/大纲，Markdown 文档，本地评论。各侧栏顶部独立开关与折叠后的边缘入口可收起/展开左右侧栏，中间编辑/阅读区域自动填满释放的空间。隐藏保留评论草稿与线程，右键添加批注自动展开评论栏；当前会话保持布局，重启默认全部展开。原生 Markdown 的 runsplash 块只显示文本。右键菜单可 Escape/外部点击/滚动关闭。
 
 Preferences 覆盖层（macOS 应用菜单 DocGenie → Settings… / ⌘,；非 macOS 工具栏按钮）只承载跨会话/全局配置，采用 Obsidian 风格设置窗口：左侧导航（外观 / 编辑器 / Agent），右侧对应页面，无保存按钮——每个控件修改即原子写盘并即时生效。外观页：正文字号（8–48，输入合法值立即重排编辑/阅读视图）与代码字体优先级列表（`editor_code_fonts`，从上往下取第一个已安装且可解析的字体族，运行时重定义 `theme.font_code` 的 loader 家族；空表或全部不可解析回退内置 Liberation Mono，行内 ↑↓ 调序、× 删除、下拉框从已安装字体添加，最多 8 项，状态行显示当前生效字体）。编辑器页：自动保存开关。Agent 页：默认自动修改开关与只读的 endpoint / model / key 来源展示；不暴露 API key 字段（继续走环境变量）。持久化到 `$AGENT_DOCS_HOME/preferences.json`（默认 macOS `~/Library/Application Support/agent-docs/`），原子 temp + rename 写入；缺失/格式错误/未知字段一律回退到默认并打印到 stderr，不阻塞启动；旧文件缺少 `editor_code_fonts` 字段时按默认链（Source Code Pro → Bangla Sangam MN → Andale Mono）兼容加载。已安装字体在后台线程扫描（`fonts.rs`，约 1 秒），扫描完成经 UI signal 自动应用一次配置。关闭自动保存会取消内部 queue_save，重新开启则为待保存快照启动 3 秒 debounce；切换 / 关闭仍立即 flush。
 
@@ -167,7 +224,7 @@ cargo run -p docgenie-desktop
 3. 真实中文 IME 人工验收、长文性能、窄窗口适配。
 4. 安全凭据 UI 与签名 `.app` 分发。
 
-当前正文块批注在编辑 / 阅读均可显示，活动样式输入仍使用原生选择高亮。阅读选区限定单块（完整列表/表格/代码也是一个块），不是跨块 source map；两次合成文本真实模型检查不能代表所有写作任务的语义质量。
+当前正文块批注在编辑 / 阅读均可显示，活动样式输入仍使用原生选择高亮。普通正文阅读支持跨块 source range，复杂列表/表格/代码端点不属于全部已验收能力；两次合成文本真实模型检查不能代表所有写作任务的语义质量。
 
 不重新增加导入、多人协作、素材库、SQLite 项目抽象、视频剪辑或自动发布。
 

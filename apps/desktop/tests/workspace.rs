@@ -28,11 +28,11 @@ fn article_is_bounded_and_centered_and_search_reuses_switcher() {
         app.locator(Selector::id("comment_input")).click();
         for nav in [true, false] {
             if !nav {
-                app.locator(Selector::id("toggle_navigation")).click();
+                support::library::toggle_sidebar(&app, true);
             }
             for comments in [true, false] {
                 if !comments {
-                    app.locator(Selector::id("toggle_comments")).click();
+                    support::library::toggle_sidebar(&app, false);
                 }
                 let (surface_x, surface_width) = rect(&app, "article_surface");
                 let (column_x, column_width) = rect(&app, "article_column");
@@ -43,11 +43,11 @@ fn article_is_bounded_and_centered_and_search_reuses_switcher() {
                 );
                 assert!((column_x - surface_x - (surface_width - column_width) / 2.0).abs() <= 2.0);
                 if !comments {
-                    app.locator(Selector::id("toggle_comments")).click();
+                    support::library::toggle_sidebar(&app, false);
                 }
             }
         }
-        app.locator(Selector::id("toggle_navigation")).click();
+        support::library::toggle_sidebar(&app, true);
         app.locator(Selector::id("document_search")).click();
         app.locator(Selector::id("switcher_overlay")).wait_visible();
         app.press_key(KeyCode::Escape);
@@ -77,9 +77,9 @@ fn narrow_workspace_keeps_document_visible_and_draft_when_navigation_opens() {
         app.locator(Selector::id("comment_input"))
             .fill("窄窗口保留草稿");
         assert!(rect(&app, "article_column").1 >= 460.0);
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("navigation_panel")).wait_visible();
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("navigation_panel")).wait_hidden();
         app.locator(Selector::id("comment_input"))
             .assert_value("窄窗口保留草稿");
@@ -113,29 +113,30 @@ fn thread_overview_filters_reopens_and_preserves_per_thread_drafts() {
             .wait_text("未解决 2");
         app.locator(Selector::id("comment_input"))
             .fill("第二条的草稿");
-        app.locator(Selector::id("thread_open").nth(0)).click();
-        app.locator(Selector::id("transcript"))
-            .wait_text("你\n第一条评论");
+        app.locator(Selector::id("quote_jump").nth(0)).click();
+        app.locator(Selector::id("transcript").text_exact("你\n第一条评论"))
+            .wait_visible();
         app.locator(Selector::id("comment_input"))
             .assert_value("第一条的草稿");
         // Blur the revealed source row so the following selection remains predictable.
         app.locator(Selector::id("comment_input")).click();
-        app.locator(Selector::id("thread_open").nth(1)).click();
-        app.locator(Selector::id("transcript"))
-            .wait_text("你\n第二条评论");
+        app.locator(Selector::id("quote_jump").nth(1)).click();
+        app.locator(Selector::id("transcript").text_exact("你\n第二条评论"))
+            .wait_visible();
         app.locator(Selector::id("comment_input"))
             .assert_value("第二条的草稿");
-        app.locator(Selector::id("thread_resolve_toggle")).click();
+        app.locator(Selector::id("thread_resolve_toggle").nth(1))
+            .click();
         app.locator(Selector::id("filter_resolved"))
             .wait_text("已解决 1");
         app.locator(Selector::id("filter_open"))
             .wait_text("未解决 1");
         app.locator(Selector::id("filter_resolved")).click();
-        app.locator(Selector::id("thread_open")).click();
-        app.locator(Selector::id("transcript"))
-            .wait_text("你\n第二条评论");
+        app.locator(Selector::id("quote_jump")).click();
+        app.locator(Selector::id("transcript").text_exact("你\n第二条评论"))
+            .wait_visible();
         app.locator(Selector::id("thread_resolve_toggle"))
-            .wait_text("重开");
+            .wait_visible();
         app.locator(Selector::id("thread_resolve_toggle")).click();
         app.locator(Selector::id("filter_resolved"))
             .wait_text("已解决 0");

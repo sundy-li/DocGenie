@@ -31,12 +31,10 @@ impl Projection {
         let mut style = Style::default();
         let mut stack = Vec::new();
         let mut image = 0;
-        for (event, range) in Parser::new_ext(
+        for (event, range) in crate::markdown_parse::events(
             source,
             Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH,
-        )
-        .into_offset_iter()
-        {
+        ) {
             match event {
                 Event::Start(tag) => {
                     if matches!(

@@ -98,12 +98,9 @@ impl Widget for TabMenu {
     }
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         if self.position.is_some() {
-            // Deliberately NOT hidden on Scroll: macOS trackpads keep emitting
-            // inertial scroll events after the fingers lift, which used to
-            // dismiss the toolbar the instant a post-scroll selection raised
-            // it. The selection is range-based and stays valid while
-            // scrolling, so the toolbar stays too.
-            if matches!(event, Event::KeyDown(key) if !crate::live_editor::select_all_key(key)) {
+            // Scroll and modifier-key releases are not dismissal commands.
+            // App freezes underlying scrolling while this menu is open.
+            if matches!(event, Event::KeyDown(key) if key.key_code==KeyCode::Escape) {
                 self.hide(cx);
                 return;
             }

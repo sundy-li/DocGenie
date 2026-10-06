@@ -119,11 +119,18 @@ fn stop_discards_late_response_without_writing() {
     run_with_config(config, |app| {
         prepare(&app);
         requests.recv_timeout(Duration::from_secs(10)).unwrap();
+        app.locator(Selector::id("ai_progress"))
+            .wait_text("等待 AI 回复…");
         app.locator(Selector::id("agent_cancel")).click();
+        app.locator(Selector::id("ai_progress"))
+            .wait_text("AI 已停止 · 迟到结果不会应用");
+        app.locator(Selector::id("ai_spinner")).wait_hidden();
+        app.locator(Selector::id("processed_badge")).wait_hidden();
         release.send(()).unwrap();
         app.locator(Selector::id("status_label"))
             .wait_text("结果已忽略，文档未修改");
         app.locator(Selector::id("live_editor")).assert_text("原文");
+        app.locator(Selector::id("view_change")).wait_hidden();
         app.locator(Selector::id("transcript"))
             .assert_text("你\n改善原文");
         app.locator(Selector::id("save_label"))
@@ -154,6 +161,9 @@ fn newer_reply_queues_latest_round_and_invalidates_old_result() {
         app.locator(Selector::id("comment_send")).click();
         app.locator(Selector::id("transcript"))
             .wait_text("你\n改善原文\n\n你\n按新增要求修改");
+        app.locator(Selector::id("ai_progress"))
+            .wait_text("AI 已排队");
+        app.locator(Selector::id("processed_badge")).wait_hidden();
         release.send(()).unwrap();
         let body = requests.recv_timeout(Duration::from_secs(10)).unwrap();
         let context: serde_json::Value =
@@ -164,6 +174,9 @@ fn newer_reply_queues_latest_round_and_invalidates_old_result() {
         release.send(()).unwrap();
         app.locator(Selector::id("live_editor"))
             .wait_text("处理后的段落");
+        app.locator(Selector::id("ai_progress"))
+            .wait_text("AI 已完成");
+        app.locator(Selector::id("view_change")).wait_visible();
         app.locator(Selector::id("transcript"))
             .wait_text("你\n改善原文\n\n你\n按新增要求修改\n\nAgent\n已按最新评论修改");
     })

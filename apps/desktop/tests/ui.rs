@@ -76,10 +76,13 @@ fn resolved_comment_stays_local_and_rejects_new_reply() {
         |app| {
             comment(&app);
             app.locator(Selector::id("thread_resolve_toggle")).click();
-            app.locator(Selector::id("thread_state"))
-                .wait_text("已解决 · 不再自动处理");
-            app.locator(Selector::id("comment_input")).fill("不应提交");
-            app.locator(Selector::id("comment_send")).click();
+            app.locator(Selector::id("filter_resolved"))
+                .wait_text("已解决 1")
+                .click();
+            app.locator(Selector::id("thread_resolve_toggle"))
+                .wait_visible();
+            app.locator(Selector::id("comment_input")).wait_hidden();
+            app.locator(Selector::id("comment_send")).wait_hidden();
             app.locator(Selector::id("transcript"))
                 .assert_text("你\n补充一个常用例子");
             app.locator(Selector::id("live_editor"))

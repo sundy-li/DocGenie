@@ -24,6 +24,20 @@ fn menu(app: &TestApp, name: &str) {
         }),
     ]);
     app.locator(Selector::id("tab_close_all")).wait_visible();
+    // Trackpad momentum after opening must not dismiss or activate a tab.
+    app.forward(vec![StudioToApp::Scroll(
+        makepad_widgets::makepad_platform::studio::RemoteScroll {
+            x,
+            y,
+            sx: 30.0,
+            sy: 2.0,
+            time: 1.2,
+            modifiers: Default::default(),
+            is_mouse: false,
+        },
+    )]);
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    app.locator(Selector::id("tab_close_all")).wait_visible();
 }
 fn create(app: &TestApp, name: &str) {
     app.locator(Selector::id("new_document")).click();
@@ -32,6 +46,22 @@ fn create(app: &TestApp, name: &str) {
     support::library::fill_document(app, format!("# {name}\n\n{name} 内容"));
     app.locator(Selector::id("save_label"))
         .wait_text("已自动保存到本地");
+}
+#[test]
+fn menu_survives_opener_release_momentum_and_modifiers_until_explicit_dismissal() {
+    support::library::run("tab_menu_lifetime", |app| {
+        create(&app, "菜单测试");
+        menu(&app, "菜单测试");
+        app.press_key(makepad_test::KeyCode::Control);
+        app.locator(Selector::id("tab_close_all")).wait_visible();
+        app.press_key(makepad_test::KeyCode::Escape);
+        app.locator(Selector::id("tab_close_all")).wait_hidden();
+        menu(&app, "菜单测试");
+        app.locator(Selector::id("title_input")).click();
+        app.locator(Selector::id("tab_close_all")).wait_hidden();
+        app.locator(Selector::id("title").text_exact("菜单测试"))
+            .wait_visible();
+    });
 }
 #[test]
 fn conflicting_save_keeps_tabs_and_in_memory_body_on_close_all() {

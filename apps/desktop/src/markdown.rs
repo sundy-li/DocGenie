@@ -183,7 +183,9 @@ script_mod! {
         draw_block +: {
             line_color: theme.color_label_inner
             sep_color: theme.color_shadow
-            quote_bg_color: theme.color_bg_highlight
+            // A Markdown quote is a neutral structural surface, not a
+            // comment annotation. Yellow is reserved for exact text bands.
+            quote_bg_color: #xf5f6f8
             quote_fg_color: theme.color_label_inner
             code_color: theme.color_bg_highlight
             selection_color: theme.color_selection_focus
@@ -259,13 +261,25 @@ pub struct DocMarkdown {
     #[rust]
     pub comment_ranges: Vec<std::ops::Range<usize>>,
     #[rust]
+    pub editor_selection: bool,
+    #[rust]
+    pub external_selection: Option<std::ops::Range<usize>>,
+    #[rust]
     comment_areas: Vec<Area>,
+    #[rust]
+    selection_areas: Vec<Area>,
+    #[live]
+    range_band: DrawColor,
     #[rust]
     source_runs: Vec<crate::edit_projection::Run>,
     #[rust]
     selection_anchor: Option<usize>,
     #[rust]
     selected_source: Option<std::ops::Range<usize>>,
+    /// Native selection segments capture turtle coordinates before parent
+    /// alignment/virtual-list shifts. Translate pointer into that draw frame.
+    #[rust]
+    selection_origin: DVec2,
     #[rust]
     had_document_selection: bool,
     #[rust]
@@ -348,8 +362,12 @@ impl Widget for DocMarkdown {
         self.links.clear();
         self.cells.clear();
         self.comment_areas.clear();
+        self.selection_areas.clear();
         self.source_runs.clear();
 
+        if self.editor_selection {
+            self.text_flow.selectable = true;
+        }
         self.begin(cx, walk);
         if self.document_selected {
             self.text_flow.areas_tracker.push_tracker();
@@ -358,6 +376,11 @@ impl Widget for DocMarkdown {
             self.draw_editable_table(cx);
         } else {
             self.process_markdown_doc(cx);
+        }
+        if self.editor_selection {
+            // Source-run bands below reuse actual draw geometry. Do not also
+            // paint TextFlow's independent tracker selection over them.
+            self.text_flow.clear_selection();
         }
         self.end(cx);
         if self.document_selected {
@@ -377,10 +400,15 @@ impl Widget for DocMarkdown {
                 self.document_band.draw_abs(cx, link.area().rect(cx));
             }
         }
+        self.range_band.color = vec4(105.0 / 255.0, 175.0 / 255.0, 165.0 / 255.0, 0.2);
+        for area in &self.selection_areas {
+            self.range_band.draw_abs(cx, area.rect(cx));
+        }
         self.comment_band.color = vec4(1.0, 0.77, 0.03, 0.25);
         for area in &self.comment_areas {
             self.comment_band.draw_abs(cx, area.rect(cx));
         }
+        self.selection_origin = self.text_flow.area().rect(cx).pos;
         self.had_document_selection = self.document_selected;
 
         DrawStep::done()
@@ -406,6 +434,7 @@ pub enum TableAction {
     #[default]
     None,
 }
+#[allow(clippy::too_many_arguments)]
 fn draw_source_text(
     tf: &mut TextFlow,
     cx: &mut Cx2d,
@@ -414,6 +443,8 @@ fn draw_source_text(
     comments: &[std::ops::Range<usize>],
     areas: &mut Vec<Area>,
     runs: &mut Vec<crate::edit_projection::Run>,
+    selection: Option<&std::ops::Range<usize>>,
+    selected_areas: &mut Vec<Area>,
 ) {
     let start = tf.selection_text_len();
     runs.push(crate::edit_projection::Run {
@@ -423,7 +454,7 @@ fn draw_source_text(
     });
     let mut boundaries = vec![0, text.len()];
     if source.len() == text.len() {
-        for comment in comments {
+        for comment in comments.iter().chain(selection) {
             let a = comment.start.max(source.start);
             let b = comment.end.min(source.end);
             if a < b {
@@ -440,17 +471,54 @@ fn draw_source_text(
         let marked = comments
             .iter()
             .any(|c| c.start < source.start + pair[1] && c.end > source.start + pair[0]);
-        if marked {
+        let selected = selection
+            .is_some_and(|s| s.start < source.start + pair[1] && s.end > source.start + pair[0]);
+        if marked || selected {
             tf.areas_tracker.push_tracker();
         }
         tf.draw_text(cx, part);
-        if marked {
+        if marked || selected {
             let (a, b) = tf.areas_tracker.pop_tracker();
-            areas.extend_from_slice(&tf.areas_tracker.areas[a..b]);
+            if marked {
+                areas.extend_from_slice(&tf.areas_tracker.areas[a..b]);
+            }
+            if selected {
+                selected_areas.extend_from_slice(&tf.areas_tracker.areas[a..b]);
+            }
         }
     }
 }
 impl DocMarkdown {
+    pub fn set_comment_ranges(&mut self, cx: &mut Cx, ranges: Vec<std::ops::Range<usize>>) {
+        if self.comment_ranges != ranges {
+            self.comment_ranges = ranges;
+            self.redraw(cx);
+        }
+    }
+    pub fn source_at_point(&self, cx: &Cx, point: DVec2) -> Option<usize> {
+        // LinkLabel's native WidgetText hit-map interpolates by y, not glyph
+        // x. Do not invent a partial-link endpoint from that approximation.
+        if self
+            .links
+            .iter()
+            .any(|link| link.point_hits_area(cx, point))
+        {
+            return None;
+        }
+        if self.text_flow.selection_get_full_text().len() != self.text_flow.selection_text_len() {
+            return None;
+        }
+        let point = point - (self.text_flow.area().rect(cx).pos - self.selection_origin);
+        let index = self.text_flow.selection_point_to_char_index(cx, point)?;
+        let run = self
+            .source_runs
+            .iter()
+            .find(|r| r.visible.start <= index && r.visible.end >= index)?;
+        if run.visible.len() != run.source.len() {
+            return None;
+        }
+        Some(run.source.start + index - run.visible.start)
+    }
     pub fn precise_selection(&self) -> Option<std::ops::Range<usize>> {
         // TextFlow's public text omits object-replacement gaps, while indices
         // include them. Refuse unmapped complex child content rather than
@@ -466,6 +534,18 @@ impl DocMarkdown {
         for (widget, _, _) in &self.cells {
             widget.as_styled_input().set_is_read_only(cx, value);
         }
+    }
+    pub fn table_cell_at(&self, cx: &Cx, point: DVec2) -> Option<(usize, usize)> {
+        if !self.editable_table || self.editor_readonly {
+            return None;
+        }
+        let (_, range, _) = self
+            .cells
+            .iter()
+            .find(|(widget, _, _)| widget.point_hits_area(cx, point))?;
+        document_core::table::Table::parse(self.body.as_ref())
+            .ok()?
+            .position(range.start)
     }
     pub fn cell_focused(&self, cx: &Cx) -> bool {
         use crate::styled_input::StyledInputWidgetRefExt;
@@ -549,19 +629,22 @@ impl DocMarkdown {
                     }
                     if let Some(mut native) = input.borrow_mut() {
                         native.set_runs(cx, projection.runs.clone());
-                        native.comment_ranges = self
-                            .comment_ranges
-                            .iter()
-                            .filter_map(|h| {
-                                let a = h.start.max(range.start);
-                                let b = h.end.min(range.end);
-                                (a < b)
-                                    .then(|| {
-                                        projection.visible_range(a - range.start..b - range.start)
-                                    })
-                                    .flatten()
-                            })
-                            .collect();
+                        native.set_comment_ranges(
+                            cx,
+                            self.comment_ranges
+                                .iter()
+                                .filter_map(|h| {
+                                    let a = h.start.max(range.start);
+                                    let b = h.end.min(range.end);
+                                    (a < b)
+                                        .then(|| {
+                                            projection
+                                                .visible_range(a - range.start..b - range.start)
+                                        })
+                                        .flatten()
+                                })
+                                .collect(),
+                        );
                     }
                     if self.document_selected
                         && let Some(mut native) = input.borrow_mut()
@@ -596,12 +679,12 @@ impl DocMarkdown {
         let mut table_alignments: Vec<Alignment> = Vec::new();
         let mut table_cell_index: usize = 0;
 
-        let parser = Parser::new_ext(
+        let mut events = crate::markdown_parse::events(
             self.body.as_ref(),
             Options::ENABLE_TABLES | Options::ENABLE_MATH,
-        );
-
-        let mut events = parser.into_offset_iter().peekable();
+        )
+        .into_iter()
+        .peekable();
         while let Some((event, source_range)) = events.next() {
             match event {
                 MdEvent::Start(Tag::Heading { level, .. }) => {
@@ -844,6 +927,8 @@ impl DocMarkdown {
                         &self.comment_ranges,
                         &mut self.comment_areas,
                         &mut self.source_runs,
+                        self.external_selection.as_ref(),
+                        &mut self.selection_areas,
                     );
                     tf.font_sizes.pop();
                     tf.fixed.pop();
@@ -905,6 +990,8 @@ impl DocMarkdown {
                             &self.comment_ranges,
                             &mut self.comment_areas,
                             &mut self.source_runs,
+                            self.external_selection.as_ref(),
+                            &mut self.selection_areas,
                         );
                     }
                 }

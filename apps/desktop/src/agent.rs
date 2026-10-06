@@ -74,7 +74,16 @@ pub struct Edit {
     pub explanation: String,
 }
 
+#[cfg(test)]
 pub fn run(config: Config, request: &CommentRequest) -> Result<Edit, String> {
+    run_with_progress(config, request, |_| {})
+}
+pub fn run_with_progress(
+    config: Config,
+    request: &CommentRequest,
+    mut progress: impl FnMut(crate::agent_progress::Progress),
+) -> Result<Edit, String> {
+    progress(crate::agent_progress::Progress::Preparing);
     let client: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(60)))
         .max_redirects(0)
@@ -94,6 +103,7 @@ pub fn run(config: Config, request: &CommentRequest) -> Result<Edit, String> {
     if !config.key.is_empty() {
         call = call.header("Authorization", format!("Bearer {}", config.key));
     }
+    progress(crate::agent_progress::Progress::Waiting);
     let mut response = call.send_json(body).map_err(|error| match error {
         ureq::Error::StatusCode(code) => format!("模型服务返回 HTTP {code}；未修改文档"),
         ureq::Error::Timeout(_) => "模型请求超时；未修改文档".into(),
@@ -105,6 +115,7 @@ pub fn run(config: Config, request: &CommentRequest) -> Result<Edit, String> {
         .limit(2 * 1024 * 1024)
         .read_json()
         .map_err(|_| "模型响应无效或超限".to_owned())?;
+    progress(crate::agent_progress::Progress::Validating);
     if wire
         .pointer("/choices/0/finish_reason")
         .and_then(|v| v.as_str())

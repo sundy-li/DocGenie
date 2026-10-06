@@ -1,7 +1,10 @@
 mod agent;
+mod agent_progress;
 mod autosave;
 mod ui;
+mod ui_hint;
 use autosave::Autosave;
+mod change_view;
 mod clipboard;
 mod comment_meta;
 mod comment_quote;
@@ -11,11 +14,13 @@ mod edit_projection;
 mod fonts;
 mod live_editor;
 mod markdown;
+mod markdown_parse;
 mod preferences;
 mod reading;
 mod styled_input;
 mod styled_layout;
 mod tab_menu;
+mod table_menu;
 mod tabs;
 mod thread_list;
 mod typography;
@@ -184,6 +189,17 @@ enum LibraryReply {
         result: Result<(), project_store::StoreError>,
     },
 }
+enum AgentEvent {
+    Progress {
+        epoch: u64,
+        project_id: String,
+        thread: usize,
+        round: u64,
+        revision: u64,
+        progress: agent_progress::Progress,
+    },
+    Finished(AgentReply),
+}
 struct AgentReply {
     epoch: u64,
     project_id: String,
@@ -216,7 +232,11 @@ pub struct App {
     #[rust]
     save_failed: bool,
     #[rust]
-    agent_rx: Option<std::sync::mpsc::Receiver<AgentReply>>,
+    agent_rx: Option<std::sync::mpsc::Receiver<AgentEvent>>,
+    #[rust]
+    agent_states: HashMap<usize, agent_progress::Progress>,
+    #[rust]
+    agent_running: Option<usize>,
     #[rust]
     agent_queue: VecDeque<usize>,
     #[rust]
@@ -229,6 +249,18 @@ pub struct App {
     tab_menu_target: Option<String>,
     #[rust]
     tab_menu_pointer: bool,
+    #[rust]
+    tab_menu_opening: bool,
+    #[rust]
+    table_target: Option<(Range<usize>, usize, usize, u64)>,
+    #[rust]
+    table_pointer: bool,
+    #[rust]
+    table_opening: bool,
+    #[rust]
+    hint_target: Option<(String, DVec2)>,
+    #[rust]
+    hint_timer: Timer,
     #[rust]
     selected: Option<Range<usize>>,
     #[rust]
@@ -279,8 +311,6 @@ pub struct App {
     #[rust]
     reply_drafts: HashMap<Option<usize>, String>,
     #[rust]
-    draft_thread: Option<usize>,
-    #[rust]
     dialog: Option<Dialog>,
     #[rust]
     switcher_hits: Vec<String>,
@@ -294,6 +324,73 @@ pub struct App {
     comments_collapsed: bool,
 }
 impl App {
+    fn hide_table_menu(&mut self, cx: &mut Cx) {
+        self.table_target = None;
+        self.table_pointer = false;
+        self.table_opening = false;
+        if let Some(mut menu) = self
+            .ui
+            .widget(cx, ids!(table_menu))
+            .borrow_mut::<table_menu::TableMenu>()
+        {
+            menu.hide(cx);
+        }
+    }
+    fn clear_hint(&mut self, cx: &mut Cx) {
+        cx.stop_timer(self.hint_timer);
+        self.hint_timer = Timer::default();
+        self.hint_target = None;
+        if let Some(mut hint) = self
+            .ui
+            .widget(cx, ids!(ui_hint))
+            .borrow_mut::<ui_hint::UiHint>()
+        {
+            hint.hide(cx);
+        }
+    }
+    fn hover_hint(&mut self, cx: &mut Cx, point: DVec2) {
+        let card_hint = self
+            .ui
+            .widget(cx, ids!(threads))
+            .borrow::<thread_list::ThreadList>()
+            .and_then(|list| list.hint_at(cx, point));
+        let mut found = card_hint;
+        if found.is_none() {
+            for (id, text) in [
+                (ids!(toggle_navigation), "收起文件侧栏"),
+                (ids!(expand_navigation), "展开文件侧栏"),
+                (ids!(toggle_comments), "收起大纲与评论"),
+                (ids!(expand_comments), "展开大纲与评论"),
+                (ids!(undo_button), "撤销正文修改 · ⌘Z"),
+                (ids!(retry_save), "重试保存"),
+                (ids!(agent_cancel), "停止 Agent"),
+                (ids!(new_folder), "新建文件夹"),
+                (ids!(rename_node), "重命名所选文件"),
+                (ids!(delete_node), "删除所选文件"),
+                (ids!(thread_prev), "上一条评论"),
+                (ids!(thread_next), "下一条评论"),
+                (ids!(comment_new), "新建评论"),
+                (ids!(mode_edit), "切换到阅读模式"),
+                (ids!(mode_read), "切换到编辑模式"),
+            ] {
+                let button = self.ui.button(cx, id);
+                if button.visible() && button.point_hits_area(cx, point) {
+                    found = Some((text, button.area().rect(cx)));
+                    break;
+                }
+            }
+        }
+        let target =
+            found.map(|(text, rect)| (text.to_owned(), rect.pos + dvec2(0.0, rect.size.y + 6.0)));
+        if self.hint_target == target {
+            return;
+        }
+        self.clear_hint(cx);
+        self.hint_target = target;
+        if self.hint_target.is_some() {
+            self.hint_timer = cx.start_timeout(0.4);
+        }
+    }
     fn set_sidebar_visibility(&mut self, cx: &mut Cx, navigation: bool, comments: bool) {
         self.navigation_collapsed = !navigation;
         self.comments_collapsed = !comments;
@@ -314,6 +411,12 @@ impl App {
         self.ui
             .view(cx, ids!(comments_panel))
             .set_visible(cx, comments);
+        self.ui
+            .view(cx, ids!(navigation_rail))
+            .set_visible(cx, !navigation);
+        self.ui
+            .view(cx, ids!(comments_rail))
+            .set_visible(cx, !comments);
         for (id, shown) in [
             (ids!(toggle_navigation), navigation),
             (ids!(toggle_comments), comments),
@@ -417,8 +520,10 @@ impl App {
         let ranges: Vec<Range<usize>> = (0..self.workbench.thread_count())
             .filter_map(|id| {
                 let thread = self.workbench.thread(id)?;
-                (!thread.resolved() && thread.revision() == self.workbench.revision())
-                    .then(|| thread.range())
+                (!thread.resolved()
+                    && !thread.processed()
+                    && thread.revision() == self.workbench.revision())
+                .then(|| thread.range())
             })
             .collect();
         if let Some(mut live) = self
@@ -481,6 +586,7 @@ impl App {
         self.sync_status(cx);
     }
     fn mode(&mut self, cx: &mut Cx, edit: bool) {
+        self.hide_table_menu(cx);
         self.popup_selection = None;
         self.hide_composer(cx);
         if let Some(mut menu) = self
@@ -518,6 +624,16 @@ impl App {
         self.ui
             .text_input(cx, ids!(title_input))
             .set_is_read_only(cx, value);
+        if let Some(list) = self
+            .ui
+            .widget(cx, ids!(threads))
+            .borrow::<thread_list::ThreadList>()
+        {
+            for (_, card) in list.cards(cx) {
+                card.text_input(cx, ids!(comment_input))
+                    .set_is_read_only(cx, value);
+            }
+        }
     }
     fn sync_reading(&self, cx: &mut Cx) {
         if let Some(mut reading) = self
@@ -725,17 +841,9 @@ impl App {
         }
     }
     fn show_thread(&mut self, cx: &mut Cx) {
-        if self.draft_thread != self.thread {
-            let input = self.ui.text_input(cx, ids!(comment_input));
-            self.reply_drafts.insert(self.draft_thread, input.text());
-            input.set_text(
-                cx,
-                self.reply_drafts
-                    .get(&self.thread)
-                    .map_or("", String::as_str),
-            );
-            self.draft_thread = self.thread;
-        }
+        self.ui
+            .view(cx, ids!(new_comment_panel))
+            .set_visible(cx, self.thread.is_none());
         let open_count = (0..self.workbench.thread_count())
             .filter(|id| self.workbench.thread(*id).is_some_and(|t| !t.resolved()))
             .count();
@@ -768,7 +876,15 @@ impl App {
             .widget(cx, ids!(threads))
             .borrow_mut::<thread_list::ThreadList>()
         {
-            list.update(cx, &self.workbench, self.filter_resolved, self.thread);
+            list.set_progress(&self.agent_states);
+            list.update(
+                cx,
+                &self.workbench,
+                self.filter_resolved,
+                self.thread,
+                self.document.as_ref().map_or("", |d| d.rel.as_str()),
+                &self.reply_drafts,
+            );
         }
         for (id, active) in [
             (ids!(filter_open), !self.filter_resolved),
@@ -784,50 +900,15 @@ impl App {
         // they also serve as the auto-reveal trigger for the active thread.
         self.ui.button(cx, ids!(thread_prev)).set_visible(cx, true);
         self.ui.button(cx, ids!(thread_next)).set_visible(cx, true);
-        self.ui
-            .button(cx, ids!(thread_rebind))
-            .set_visible(cx, self.rebind_target.is_some() && self.selected.is_some());
-        // Single checkmark toggles resolved ⇄ open. Label reflects current
-        // state so users can read it without opening a menu.
-        let active_thread = self.thread.and_then(|id| self.workbench.thread(id));
-        self.ui
-            .button(cx, ids!(thread_resolve_toggle))
-            .set_visible(cx, active_thread.is_some());
-        self.ui.button(cx, ids!(thread_resolve_toggle)).set_text(
-            cx,
-            if active_thread.is_some_and(|t| t.resolved()) {
-                "重开"
-            } else {
-                "解决"
-            },
-        );
+        if self.thread.is_none() {
+            self.ui
+                .button(cx, ids!(thread_rebind))
+                .set_visible(cx, self.rebind_target.is_some() && self.selected.is_some());
+        }
         self.ui
             .label(cx, ids!(comments_label))
             .set_text(cx, &format!("评论 ({})", self.workbench.thread_count()));
-        if let Some(thread) = self.thread.and_then(|id| self.workbench.thread(id)) {
-            self.ui
-                .widget(cx, ids!(quote))
-                .set_text(cx, thread.original());
-            if let Some(mut discussion) = self
-                .ui
-                .widget(cx, ids!(transcript))
-                .borrow_mut::<discussion::Discussion>()
-            {
-                discussion.update(cx, self.thread, thread.messages(), &thread.transcript());
-            }
-            self.ui.label(cx, ids!(thread_state)).set_text(
-                cx,
-                if thread.resolved() {
-                    "已解决 · 不再自动处理"
-                } else {
-                    if thread.revision() != self.workbench.revision() {
-                        "原段落已变化 · 请重新绑定"
-                    } else {
-                        "本地评论线程"
-                    }
-                },
-            );
-        } else {
+        if self.thread.is_none() {
             self.ui.widget(cx, ids!(quote)).set_text(
                 cx,
                 self.selected
@@ -835,16 +916,6 @@ impl App {
                     .and_then(|r| self.workbench.text().get(r.clone()))
                     .unwrap_or(""),
             );
-            if let Some(mut discussion) = self
-                .ui
-                .widget(cx, ids!(transcript))
-                .borrow_mut::<discussion::Discussion>()
-            {
-                discussion.update(cx, None, &[], "");
-            }
-            self.ui
-                .label(cx, ids!(thread_state))
-                .set_text(cx, "新评论 · 先选择文档段落");
         }
     }
     fn capture_selection(&mut self, cx: &mut Cx, position: DVec2) -> Result<(), String> {
@@ -928,6 +999,9 @@ impl App {
         }
         if self.agent_rx.is_some() {
             self.enqueue_agent(id);
+            self.agent_states
+                .insert(id, agent_progress::Progress::Queued);
+            self.show_thread(cx);
             self.status(cx, "评论已排队，Agent 将处理最新回复。");
             return;
         }
@@ -951,6 +1025,10 @@ impl App {
                 {
                     self.start_agent(cx, id);
                     break;
+                } else {
+                    self.agent_states
+                        .insert(id, agent_progress::Progress::Ignored);
+                    self.show_thread(cx);
                 }
             }
         }
@@ -959,6 +1037,9 @@ impl App {
         let request = match self.workbench.comment_request(id) {
             Ok(r) => r,
             Err(e) => {
+                self.agent_states
+                    .insert(id, agent_progress::Progress::Failed(e.to_string()));
+                self.show_thread(cx);
                 self.status(cx, &e.to_string());
                 return;
             }
@@ -966,6 +1047,9 @@ impl App {
         let config = match agent::Config::from_env() {
             Ok(c) => c,
             Err(e) => {
+                self.agent_states
+                    .insert(id, agent_progress::Progress::Failed(e.clone()));
+                self.show_thread(cx);
                 self.status(cx, &e);
                 return;
             }
@@ -977,30 +1061,77 @@ impl App {
         let project_id = document.id.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         self.agent_rx = Some(rx);
-        self.status(cx, "Agent 正在读取段落与评论…");
+        self.agent_running = Some(id);
+        self.agent_states
+            .insert(id, agent_progress::Progress::Preparing);
+        self.show_thread(cx);
+        self.status(cx, "Agent 正在读取选区与评论…");
         std::thread::spawn(move || {
-            let result = agent::run(config, &request);
-            let _ = tx.send(AgentReply {
+            let result = agent::run_with_progress(config, &request, |progress| {
+                let _ = tx.send(AgentEvent::Progress {
+                    epoch,
+                    project_id: project_id.clone(),
+                    thread: id,
+                    round: request.round,
+                    revision: request.revision,
+                    progress,
+                });
+                SignalToUI::set_ui_signal();
+            });
+            let _ = tx.send(AgentEvent::Finished(AgentReply {
                 epoch,
                 project_id,
                 request,
                 result,
-            });
+            }));
             SignalToUI::set_ui_signal();
         });
     }
     fn poll_agent(&mut self, cx: &mut Cx) {
-        let reply = match self.agent_rx.as_ref().map(|rx| rx.try_recv()) {
-            Some(Ok(reply)) => reply,
-            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                self.agent_rx = None;
-                self.status(cx, "Agent 任务异常，文档未修改");
-                self.drain_agent(cx);
-                return;
+        let reply = loop {
+            match self.agent_rx.as_ref().map(|rx| rx.try_recv()) {
+                Some(Ok(AgentEvent::Progress {
+                    epoch,
+                    project_id,
+                    thread,
+                    round,
+                    revision,
+                    progress,
+                })) => {
+                    if epoch == self.epoch
+                        && self
+                            .document
+                            .as_ref()
+                            .is_some_and(|d| d.id.to_string() == project_id)
+                        && self.workbench.thread(thread).is_some_and(|t| {
+                            t.round() == round
+                                && !t.resolved()
+                                && self.workbench.revision() == revision
+                        })
+                    {
+                        self.agent_states.insert(thread, progress);
+                        self.show_thread(cx);
+                    }
+                }
+                Some(Ok(AgentEvent::Finished(reply))) => break reply,
+                Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                    self.agent_rx = None;
+                    if let Some(id) = self.agent_running.take() {
+                        self.agent_states.insert(
+                            id,
+                            agent_progress::Progress::Failed("任务异常，文档未修改".into()),
+                        );
+                        self.show_thread(cx);
+                    }
+                    self.status(cx, "Agent 任务异常，文档未修改");
+                    self.drain_agent(cx);
+                    return;
+                }
+                _ => return,
             }
-            _ => return,
         };
         self.agent_rx = None;
+        self.agent_running = None;
         let wanted = self.auto
             || self
                 .workbench
@@ -1013,6 +1144,20 @@ impl App {
                 .as_ref()
                 .is_none_or(|doc| reply.project_id != doc.id.to_string())
         {
+            if self
+                .document
+                .as_ref()
+                .is_some_and(|d| d.id.to_string() == reply.project_id)
+            {
+                self.agent_states
+                    .entry(reply.request.thread)
+                    .and_modify(|p| {
+                        if *p != agent_progress::Progress::Cancelled {
+                            *p = agent_progress::Progress::Ignored;
+                        }
+                    });
+                self.show_thread(cx);
+            }
             self.status(cx, "结果已忽略，文档未修改");
             self.drain_agent(cx);
             return;
@@ -1024,13 +1169,25 @@ impl App {
                 &edit.explanation,
             ) {
                 Ok(()) => {
+                    self.agent_states
+                        .insert(reply.request.thread, agent_progress::Progress::Completed);
                     self.stamp_message(reply.request.thread, "Agent");
                     self.selected = None;
                     self.sync_document(cx);
                     self.show_thread(cx);
-                    self.status(cx, "已修改选区并回复 · 可撤销 · 自动保存");
+                    self.status(
+                        cx,
+                        if edit.replacement == reply.request.original {
+                            "Agent 已回复 · 正文未修改 · 评论已处理"
+                        } else {
+                            "已修改选区并回复 · 可撤销 · 自动保存"
+                        },
+                    );
                 }
                 Err(e) => {
+                    self.agent_states
+                        .insert(reply.request.thread, agent_progress::Progress::Ignored);
+                    self.show_thread(cx);
                     self.status(cx, &e.to_string());
                     // Only a newer user reply on the same unchanged paragraph
                     // triggers a fresh round, never rebase a stale document.
@@ -1043,7 +1200,14 @@ impl App {
                     }
                 }
             },
-            Err(e) => self.status(cx, &e),
+            Err(e) => {
+                self.agent_states.insert(
+                    reply.request.thread,
+                    agent_progress::Progress::Failed(e.clone()),
+                );
+                self.show_thread(cx);
+                self.status(cx, &e);
+            }
         }
         self.drain_agent(cx);
     }
@@ -1389,6 +1553,8 @@ impl App {
     }
     fn hide_tab_menu(&mut self, cx: &mut Cx) {
         self.tab_menu_target = None;
+        self.tab_menu_pointer = false;
+        self.tab_menu_opening = false;
         if let Some(mut menu) = self
             .ui
             .widget(cx, ids!(tab_menu))
@@ -1448,7 +1614,8 @@ impl App {
                 self.selected = None;
                 self.rebind_target = None;
                 self.reply_drafts.clear();
-                self.draft_thread = None;
+                self.agent_states.clear();
+                self.agent_running = None;
                 self.hide_composer(cx);
                 self.readonly(cx, false);
                 self.sync_document(cx);
@@ -1562,6 +1729,7 @@ impl App {
         }
     }
     fn switch_document(&mut self, cx: &mut Cx, command: LibraryCommand) {
+        self.hide_table_menu(cx);
         if self.save_failed {
             self.status(cx, "保存失败，不能切换并丢弃当前编辑。");
             return;
@@ -1591,8 +1759,9 @@ impl App {
                     self.cancel_save_timer(cx);
                     self.readonly(cx, false);
                     self.workbench = loaded.workbench;
+                    self.agent_states.clear();
+                    self.agent_running = None;
                     self.reply_drafts.clear();
-                    self.draft_thread = None;
                     self.ui.text_input(cx, ids!(comment_input)).set_text(cx, "");
                     let rel = loaded.document.rel.clone();
                     self.document = Some(loaded.document);
@@ -1951,13 +2120,72 @@ impl MatchEvent for App {
         }
     }
     fn handle_actions(&mut self, cx: &mut Cx, actions: &Actions) {
-        if self.ui.button(cx, ids!(toggle_navigation)).clicked(actions) {
+        for (id, command) in [
+            (
+                ids!(table_row_above),
+                document_core::table::Command::RowAbove,
+            ),
+            (
+                ids!(table_row_below),
+                document_core::table::Command::RowBelow,
+            ),
+            (
+                ids!(table_delete_row),
+                document_core::table::Command::DeleteRow,
+            ),
+            (
+                ids!(table_column_left),
+                document_core::table::Command::ColumnLeft,
+            ),
+            (
+                ids!(table_column_right),
+                document_core::table::Command::ColumnRight,
+            ),
+            (
+                ids!(table_delete_column),
+                document_core::table::Command::DeleteColumn,
+            ),
+        ] {
+            if self.ui.button(cx, id).clicked(actions)
+                && let Some((range, row, column, revision)) = self.table_target.clone()
+            {
+                self.hide_table_menu(cx);
+                if !self.editing
+                    || self.document.is_none()
+                    || self.pending_switch.is_some()
+                    || self.pending_tabs.is_some()
+                    || self.closing
+                    || self.save_failed
+                {
+                    return;
+                }
+                match self
+                    .workbench
+                    .edit_table(revision, range, row, column, command)
+                {
+                    Ok(()) => {
+                        self.selected = None;
+                        self.popup_selection = None;
+                        self.sync_document(cx);
+                        self.show_thread(cx);
+                        self.queue_save(cx);
+                        self.status(cx, "表格已更新 · 可撤销");
+                    }
+                    Err(error) => self.status(cx, &error.to_string()),
+                }
+            }
+        }
+        if self.ui.button(cx, ids!(toggle_navigation)).clicked(actions)
+            || self.ui.button(cx, ids!(expand_navigation)).clicked(actions)
+        {
             let shown = self.ui.view(cx, ids!(navigation_panel)).visible();
             let comments = !self.comments_collapsed
                 && (shown || self.window_width == 0.0 || self.window_width >= 1100.0);
             self.set_sidebar_visibility(cx, !shown, comments);
         }
-        if self.ui.button(cx, ids!(toggle_comments)).clicked(actions) {
+        if self.ui.button(cx, ids!(toggle_comments)).clicked(actions)
+            || self.ui.button(cx, ids!(expand_comments)).clicked(actions)
+        {
             let shown = self.ui.view(cx, ids!(comments_panel)).visible();
             self.set_sidebar_visibility(cx, !self.navigation_collapsed, !shown);
         }
@@ -2160,17 +2388,6 @@ impl MatchEvent for App {
             return;
         }
         let before = self.snapshot();
-        if self.ui.button(cx, ids!(quote_jump)).clicked(actions) {
-            if self
-                .thread
-                .and_then(|id| self.workbench.thread(id))
-                .is_some_and(|t| t.revision() == self.workbench.revision())
-            {
-                self.reveal_active_thread(cx);
-            } else {
-                self.status(cx, "原文锚点已过期，请重新绑定后定位。");
-            }
-        }
         if self.ui.button(cx, ids!(document_search)).clicked(actions) {
             self.show_switcher(cx);
         }
@@ -2180,21 +2397,78 @@ impl MatchEvent for App {
                 self.show_thread(cx);
             }
         }
-        let thread_list = self.ui.widget(cx, ids!(threads));
-        for (index, row) in thread_list
-            .portal_list(cx, ids!(list))
-            .items_with_actions(actions)
-        {
-            if row.button(cx, ids!(thread_open)).clicked(actions) {
-                let id = thread_list
-                    .borrow::<thread_list::ThreadList>()
-                    .and_then(|list| list.thread_at(index));
-                if let Some(id) = id {
-                    self.thread = Some(id);
-                    self.selected = None;
-                    self.rebind_target = None;
-                    self.show_thread(cx);
-                    self.reveal_active_thread(cx);
+        let cards = self
+            .ui
+            .widget(cx, ids!(threads))
+            .borrow::<thread_list::ThreadList>()
+            .map(|list| list.cards(cx))
+            .unwrap_or_default();
+        for (id, row) in cards {
+            if row.button(cx, ids!(view_change)).clicked(actions)
+                && let Some(mut list) = self
+                    .ui
+                    .widget(cx, ids!(threads))
+                    .borrow_mut::<thread_list::ThreadList>()
+            {
+                list.toggle_change(cx, id);
+            }
+            if let Some(draft) = row.text_input(cx, ids!(comment_input)).changed(actions) {
+                self.reply_drafts.insert(Some(id), draft);
+                row.button(cx, ids!(comment_send)).set_enabled(
+                    cx,
+                    !row.text_input(cx, ids!(comment_input))
+                        .text()
+                        .trim()
+                        .is_empty(),
+                );
+            }
+            if row.button(cx, ids!(quote_jump)).clicked(actions) {
+                self.thread = Some(id);
+                self.selected = None;
+                self.rebind_target = None;
+                self.show_thread(cx);
+                self.reveal_active_thread(cx);
+            }
+            if row.button(cx, ids!(thread_resolve_toggle)).clicked(actions) {
+                if self.workbench.thread(id).is_some_and(|t| t.resolved()) {
+                    let _ = self.workbench.reopen_thread(id);
+                } else {
+                    let _ = self.workbench.resolve_thread(id);
+                }
+                if self.agent_states.get(&id).is_some_and(|p| p.busy()) {
+                    self.agent_states
+                        .insert(id, agent_progress::Progress::Ignored);
+                }
+                self.thread = Some(id);
+                self.show_thread(cx);
+            }
+            if row.button(cx, ids!(thread_rebind)).clicked(actions)
+                && let Some(range) = self.selected.clone()
+            {
+                match self.workbench.rebind_thread(id, range) {
+                    Ok(()) => {
+                        self.selected = None;
+                        self.rebind_target = None;
+                        self.thread = Some(id);
+                        self.show_thread(cx);
+                    }
+                    Err(e) => self.status(cx, &e.to_string()),
+                }
+            }
+            if row.button(cx, ids!(comment_send)).clicked(actions) {
+                let text = row.text_input(cx, ids!(comment_input)).text();
+                match self.workbench.reply(id, &text) {
+                    Ok(()) => {
+                        self.stamp_message(id, "你");
+                        self.reply_drafts.remove(&Some(id));
+                        row.text_input(cx, ids!(comment_input)).set_text(cx, "");
+                        self.thread = Some(id);
+                        self.show_thread(cx);
+                        if self.auto || self.workbench.thread(id).is_some_and(|t| t.ask_ai()) {
+                            self.run_agent(cx);
+                        }
+                    }
+                    Err(e) => self.status(cx, &e.to_string()),
                 }
             }
         }
@@ -2251,24 +2525,8 @@ impl MatchEvent for App {
             self.show_thread(cx);
             self.reveal_active_thread(cx);
         }
-        if self
-            .ui
-            .button(cx, ids!(thread_resolve_toggle))
-            .clicked(actions)
-            && let Some(id) = self.thread
-            && let Some(thread) = self.workbench.thread(id).cloned()
-        {
-            // Single checkmark: reopen an already-resolved thread, otherwise
-            // resolve it. Domain calls stay separate so round accounting is
-            // honest; UI hides the distinction.
-            if thread.resolved() {
-                let _ = self.workbench.reopen_thread(id);
-            } else {
-                let _ = self.workbench.resolve_thread(id);
-            }
-            self.show_thread(cx);
-        }
-        if self.ui.button(cx, ids!(thread_rebind)).clicked(actions)
+        if self.rebind_target.is_some()
+            && self.ui.button(cx, ids!(thread_rebind)).clicked(actions)
             && let Some(range) = self.selected.clone()
             && let Some(id) = self.rebind_target
         {
@@ -2493,7 +2751,7 @@ impl MatchEvent for App {
             self.rebind_target = None;
             self.show_thread(cx);
         }
-        if self.ui.button(cx, ids!(comment_send)).clicked(actions) {
+        if self.thread.is_none() && self.ui.button(cx, ids!(comment_send)).clicked(actions) {
             let text = self.ui.text_input(cx, ids!(comment_input)).text();
             let result = if let Some(id) = self.thread {
                 self.workbench.reply(id, &text)
@@ -2541,6 +2799,12 @@ impl MatchEvent for App {
         // thread_resolve_toggle is wired once above; no second handler.
         if self.ui.button(cx, ids!(agent_cancel)).clicked(actions) {
             self.auto = false;
+            for state in self.agent_states.values_mut() {
+                if state.busy() {
+                    *state = agent_progress::Progress::Cancelled;
+                }
+            }
+            self.show_thread(cx);
             self.agent_queue.clear();
             self.epoch += 1;
             self.status(cx, "自动修改已停止；进行中结果将忽略。");
@@ -2578,6 +2842,17 @@ impl MatchEvent for App {
         self.sync_status(cx);
     }
     fn handle_timer(&mut self, cx: &mut Cx, event: &TimerEvent) {
+        if self.hint_timer.0 != 0 && self.hint_timer.0 == event.timer_id {
+            self.hint_timer = Timer::default();
+            if let Some((text, point)) = &self.hint_target
+                && let Some(mut hint) = self
+                    .ui
+                    .widget(cx, ids!(ui_hint))
+                    .borrow_mut::<ui_hint::UiHint>()
+            {
+                hint.show(cx, *point, text);
+            }
+        }
         if self.save_timer.0 != 0 && self.save_timer.0 == event.timer_id {
             self.save_timer = Timer::default();
             self.flush_save(cx);
@@ -2594,15 +2869,31 @@ impl AppMain for App {
         context_menu::script_mod(vm);
         discussion::script_mod(vm);
         comment_quote::script_mod(vm);
+        change_view::script_mod(vm);
         thread_list::script_mod(vm);
         tab_menu::script_mod(vm);
+        table_menu::script_mod(vm);
         styled_input::script_mod(vm);
         markdown::script_mod(vm);
         live_editor::script_mod(vm);
         reading::script_mod(vm);
+        ui_hint::script_mod(vm);
         ui::script_mod(vm)
     }
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::MouseMove(mouse) = event
+            && !cx
+                .fingers
+                .is_area_captured(self.ui.widget(cx, ids!(live_editor)).area())
+        {
+            self.hover_hint(cx, mouse.abs);
+        }
+        if matches!(
+            event,
+            Event::MouseDown(_) | Event::Scroll(_) | Event::KeyDown(_) | Event::WindowGeomChange(_)
+        ) {
+            self.clear_hint(cx);
+        }
         if let Event::QuitRequested(quit) = event
             && (self.file_rx.is_some()
                 || (self.document.is_some() && self.persisted.as_ref() != Some(&self.snapshot())))
@@ -2623,6 +2914,75 @@ impl AppMain for App {
         }
         if let Event::MouseDown(mouse) = event
             && mouse.button == MouseButton::SECONDARY
+            && self.editing
+        {
+            let target = self
+                .ui
+                .widget(cx, ids!(live_editor))
+                .borrow::<live_editor::LiveEditor>()
+                .and_then(|live| live.table_cell_at(cx, mouse.abs));
+            if let Some((range, row, column)) = target {
+                self.hide_table_menu(cx);
+                self.hide_tab_menu(cx);
+                self.hide_composer(cx);
+                if let Some(mut menu) = self
+                    .ui
+                    .widget(cx, ids!(comment_menu))
+                    .borrow_mut::<context_menu::CommentMenu>()
+                {
+                    menu.hide(cx);
+                }
+                self.table_target = Some((range.clone(), row, column, self.workbench.revision()));
+                self.table_opening = true;
+                if let Some(mut menu) = self
+                    .ui
+                    .widget(cx, ids!(table_menu))
+                    .borrow_mut::<table_menu::TableMenu>()
+                {
+                    menu.show(cx, mouse.abs);
+                }
+                let columns = document_core::table::Table::parse(&self.workbench.text()[range])
+                    .ok()
+                    .map_or(0, |t| t.cells[0].len());
+                self.ui
+                    .button(cx, ids!(table_row_above))
+                    .set_enabled(cx, row > 0);
+                self.ui
+                    .button(cx, ids!(table_delete_row))
+                    .set_enabled(cx, row > 0);
+                self.ui
+                    .button(cx, ids!(table_delete_column))
+                    .set_enabled(cx, columns > 1);
+                return;
+            }
+        }
+        if self.table_target.is_some() {
+            if self.table_opening && matches!(event, Event::MouseUp(_)) {
+                self.table_opening = false;
+                return;
+            }
+            if matches!(event, Event::Scroll(_)) {
+                return;
+            }
+            let inside = matches!(event,Event::MouseDown(m) if self.ui.widget(cx,ids!(table_menu)).borrow::<table_menu::TableMenu>().is_some_and(|menu|menu.contains(cx,m.abs)));
+            if inside || self.table_pointer {
+                if matches!(event, Event::MouseDown(_)) {
+                    self.table_pointer = true;
+                }
+                self.ui
+                    .widget(cx, ids!(table_menu))
+                    .handle_event(cx, event, &mut Scope::empty());
+                if matches!(event, Event::MouseUp(_)) {
+                    self.table_pointer = false;
+                }
+                return;
+            }
+            if matches!(event, Event::MouseDown(_) | Event::KeyDown(_)) {
+                self.hide_table_menu(cx);
+            }
+        }
+        if let Event::MouseDown(mouse) = event
+            && mouse.button == MouseButton::SECONDARY
         {
             for i in 0..self.tabs.len() {
                 if self
@@ -2632,6 +2992,7 @@ impl AppMain for App {
                 {
                     self.hide_tab_menu(cx);
                     self.tab_menu_target = Some(self.tabs[i].clone());
+                    self.tab_menu_opening = true;
                     if let Some(mut menu) = self
                         .ui
                         .widget(cx, ids!(tab_menu))
@@ -2650,6 +3011,16 @@ impl AppMain for App {
             }
         }
         if self.tab_menu_target.is_some() {
+            // The opening right-click release belongs to the opener, not a
+            // menu item or the document below it. Trackpad inertia is not a
+            // dismissal command either; keep the overlay until explicit exit.
+            if self.tab_menu_opening && matches!(event, Event::MouseUp(_)) {
+                self.tab_menu_opening = false;
+                return;
+            }
+            if matches!(event, Event::Scroll(_)) {
+                return;
+            }
             let inside = match event {
                 Event::MouseDown(m) => self
                     .ui
@@ -2672,8 +3043,9 @@ impl AppMain for App {
             }
             if matches!(
                 event,
-                Event::KeyDown(_) | Event::MouseDown(_) | Event::Scroll(_)
-            ) {
+                Event::KeyDown(key) if key.key_code==KeyCode::Escape
+            ) || matches!(event, Event::MouseDown(_))
+            {
                 self.hide_tab_menu(cx);
             }
         }
@@ -2798,6 +3170,11 @@ impl AppMain for App {
                 .text_input(cx, ids!(title_input))
                 .borrow()
                 .is_some_and(|i| i.key_focus(cx))
+            && !self
+                .ui
+                .widget(cx, ids!(threads))
+                .borrow::<thread_list::ThreadList>()
+                .is_some_and(|list| list.reply_focused(cx))
             && !self
                 .ui
                 .text_input(cx, ids!(comment_input))

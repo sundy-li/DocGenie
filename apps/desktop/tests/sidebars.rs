@@ -33,17 +33,38 @@ fn independent_sidebars_reclaim_space_and_preserve_drafts() {
         app.locator(Selector::id("comment_input"))
             .fill("尚未发送的评论草稿");
         let original = width(&app, "live_panel");
+        let snap = app.widget_snapshot();
+        let center = snap.iter().find(|w| w.id == "center_panel").unwrap();
+        for (button, panel) in [
+            ("toggle_navigation", "navigation_panel"),
+            ("toggle_comments", "comments_panel"),
+        ] {
+            let button = snap.iter().find(|w| w.id == button && w.visible).unwrap();
+            let panel = snap.iter().find(|w| w.id == panel).unwrap();
+            assert!(
+                button.x >= panel.x && button.x + button.width <= panel.x + panel.width,
+                "collapse must be inside its sidebar"
+            );
+            assert!(
+                button.x + button.width <= center.x || button.x >= center.x + center.width,
+                "collapse must not consume center tabs"
+            );
+        }
+        println!(
+            "sidebar-owned collapse buttons: {}",
+            app.screenshot().display()
+        );
 
-        app.locator(Selector::id("toggle_navigation")).click();
+        support::library::toggle_sidebar(&app, true);
         app.locator(Selector::id("navigation_panel")).wait_hidden();
-        app.locator(Selector::id("toggle_navigation"))
+        app.locator(Selector::id("expand_navigation"))
             .wait_visible();
         app.locator(Selector::id("comments_panel")).wait_visible();
         wait_width(&app, "live_panel", (original + 249.0).min(760.0));
 
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_hidden();
-        app.locator(Selector::id("toggle_comments")).wait_visible();
+        app.locator(Selector::id("expand_comments")).wait_visible();
         wait_width(&app, "live_panel", (original + 590.0).min(760.0));
         app.locator(Selector::id("live_editor")).assert_text(text);
         println!(
@@ -51,11 +72,11 @@ fn independent_sidebars_reclaim_space_and_preserve_drafts() {
             support::wait_for_ink(&app, "revision_label").display()
         );
 
-        app.locator(Selector::id("toggle_navigation")).click();
+        support::library::toggle_sidebar(&app, true);
         app.locator(Selector::id("navigation_panel")).wait_visible();
         app.locator(Selector::id("comments_panel")).wait_hidden();
         wait_width(&app, "live_panel", (original + 341.0).min(760.0));
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_visible();
         wait_width(&app, "live_panel", original);
         app.locator(Selector::id("comment_input"))
@@ -64,10 +85,10 @@ fn independent_sidebars_reclaim_space_and_preserve_drafts() {
         app.locator(Selector::id("mode_edit")).click();
         support::wait_for_ink(&app, "preview");
         let preview_width = width(&app, "preview_panel");
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_hidden();
         wait_width(&app, "preview_panel", (preview_width + 341.0).min(760.0));
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_visible();
         wait_width(&app, "preview_panel", preview_width);
     });
@@ -77,8 +98,8 @@ fn independent_sidebars_reclaim_space_and_preserve_drafts() {
 fn right_click_comment_reopens_hidden_comments_only() {
     support::library::run("comment_reopens_sidebar", |app| {
         support::library::fill_document(&app, "待批注的原始段落");
-        app.locator(Selector::id("toggle_navigation")).click();
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, true);
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_hidden();
         app.locator(Selector::id("rendered").nth(0)).click();
         app.press_key_with_modifiers(
@@ -99,9 +120,9 @@ fn right_click_comment_reopens_hidden_comments_only() {
         app.locator(Selector::id("comment_send")).click();
         app.locator(Selector::id("transcript"))
             .wait_text("你\n请补充说明");
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("comments_panel")).wait_hidden();
-        app.locator(Selector::id("toggle_comments")).click();
+        support::library::toggle_sidebar(&app, false);
         app.locator(Selector::id("transcript"))
             .wait_text("你\n请补充说明");
     });

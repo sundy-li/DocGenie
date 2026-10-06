@@ -3,7 +3,7 @@
 use crate::markdown::{DocMarkdown as Markdown, DocMarkdownWidgetRefExt};
 use document_core::Workbench;
 use makepad_widgets::*;
-use pulldown_cmark::{Event as MdEvent, Options, Parser};
+use pulldown_cmark::{Event as MdEvent, Options};
 use std::ops::Range;
 
 script_mod! {
@@ -21,6 +21,9 @@ script_mod! {
     mod.widgets.Reading = #(Reading::register_widget(vm)){
         width: Fill height: Fill
         list := PortalList{width: Fill height: Fill flow: Down
+            scroll_bar +: {bar_size: 12.0 bar_side_margin: 2.0
+                draw_bg +: {size: 7.0 color: #x969ba5 color_hover: #x737b89 color_drag: #x566274 border_size: 0.0 border_radius: 3.5}
+            }
             Block := ArticleBlock{}
             Highlight := ArticleBlock{
                 draw_bg +: {color: #xffffff}
@@ -57,6 +60,10 @@ pub struct Reading {
     pointer: Option<DVec2>,
     #[rust]
     highlights: Vec<Range<usize>>,
+    #[rust]
+    source_anchor: Option<(usize, usize)>,
+    #[rust]
+    cross_selection: Option<Range<usize>>,
 }
 /// Top-level Markdown blocks preserve complete list/table/fence syntax. Offset
 /// ranges come from the same parser as the native Markdown widget.
@@ -65,7 +72,7 @@ pub fn block_ranges(text: &str) -> Vec<Range<usize>> {
     let mut depth = 0;
     let mut start = 0;
     for (event, range) in
-        Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_MATH).into_offset_iter()
+        crate::markdown_parse::events(text, Options::ENABLE_TABLES | Options::ENABLE_MATH)
     {
         match event {
             MdEvent::Start(_) => {
@@ -108,7 +115,7 @@ impl Reading {
         let title = title_block(&self.text);
         self.highlights = (0..workbench.thread_count())
             .filter_map(|id| workbench.thread(id))
-            .filter(|t| !t.resolved() && t.revision() == workbench.revision())
+            .filter(|t| !t.resolved() && !t.processed() && t.revision() == workbench.revision())
             .map(|t| t.range())
             .collect();
         self.blocks = block_ranges(&self.text)
@@ -118,6 +125,7 @@ impl Reading {
                 let thread = (0..workbench.thread_count()).find(|id| {
                     let t = workbench.thread(*id).unwrap();
                     !t.resolved()
+                        && !t.processed()
                         && t.revision() == workbench.revision()
                         && t.range().start < range.end
                         && t.range().end > range.start
@@ -130,13 +138,48 @@ impl Reading {
             })
             .collect();
         if changed {
+            self.source_anchor = None;
+            self.cross_selection = None;
             self.view
                 .portal_list(cx, ids!(list))
                 .set_first_id_and_scroll(0, 0.0);
         }
         self.redraw(cx);
     }
+    fn source_point(&self, cx: &Cx, point: DVec2) -> Option<(usize, usize)> {
+        let list = self.view.portal_list(cx, ids!(list));
+        let list = list.borrow()?;
+        let (id, entry) = list
+            .items()
+            .iter()
+            .filter(|(id, _)| **id < self.blocks.len())
+            .min_by(|(_, a), (_, b)| {
+                let distance = |r: Rect| {
+                    if point.y < r.pos.y {
+                        r.pos.y - point.y
+                    } else if point.y > r.pos.y + r.size.y {
+                        point.y - r.pos.y - r.size.y
+                    } else {
+                        0.0
+                    }
+                };
+                distance(a.widget.area().rect(cx)).total_cmp(&distance(b.widget.area().rect(cx)))
+            })?;
+        let offset = entry
+            .widget
+            .child_by_path(ids!(markdown))
+            .borrow::<Markdown>()?
+            .source_at_point(cx, point)?;
+        Some((*id, self.blocks[*id].range.start + offset))
+    }
     pub fn selected_block(&self, cx: &Cx, position: DVec2) -> Option<Range<usize>> {
+        if self
+            .cross_selection
+            .as_ref()
+            .is_some_and(|r| r.start < r.end)
+        {
+            return self.cross_selection.clone();
+        }
         let list = self.view.portal_list(cx, ids!(list));
         let list = list.borrow()?;
         for (id, entry) in list.items().iter() {
@@ -207,18 +250,29 @@ impl Widget for Reading {
                         let markdown = row.doc_markdown(cx, ids!(markdown));
                         if let Some(mut widget) = markdown.borrow_mut() {
                             crate::typography::apply(&mut widget, &block.text, self.body());
-                            widget.comment_ranges = self
-                                .highlights
-                                .iter()
-                                .filter_map(|h| {
-                                    let a = h.start.max(block.range.start);
-                                    let b = h.end.min(block.range.end);
+                            widget.external_selection =
+                                self.cross_selection.as_ref().and_then(|s| {
+                                    let a = s.start.max(block.range.start);
+                                    let b = s.end.min(block.range.end);
                                     (a < b).then_some(
                                         a.saturating_sub(block.range.start)
                                             ..b.saturating_sub(block.range.start),
                                     )
-                                })
-                                .collect();
+                                });
+                            widget.set_comment_ranges(
+                                cx,
+                                self.highlights
+                                    .iter()
+                                    .filter_map(|h| {
+                                        let a = h.start.max(block.range.start);
+                                        let b = h.end.min(block.range.end);
+                                        (a < b).then_some(
+                                            a.saturating_sub(block.range.start)
+                                                ..b.saturating_sub(block.range.start),
+                                        )
+                                    })
+                                    .collect(),
+                            );
                         }
                         markdown.set_text(cx, &block.text);
                         row.button(cx, ids!(badge))
@@ -258,14 +312,36 @@ impl Widget for Reading {
                 return;
             }
         }
+        if let Event::TextCopy(copy) = event
+            && let Some(range) = &self.cross_selection
+        {
+            *copy.response.borrow_mut() = self.text.get(range.clone()).map(str::to_owned);
+            return;
+        }
         if let Event::MouseDown(mouse) = event
             && mouse.button == MouseButton::PRIMARY
         {
+            self.cross_selection = None;
+            self.source_anchor = self.source_point(cx, mouse.abs);
             self.pointer = Some(mouse.abs);
+        }
+        let moved = match event {
+            Event::MouseMove(m) => Some(m.abs),
+            Event::MouseUp(m) if m.button == MouseButton::PRIMARY => Some(m.abs),
+            _ => None,
+        };
+        if let Some(point) = moved
+            && let Some((start_id, anchor)) = self.source_anchor
+            && let Some((id, cursor)) = self.source_point(cx, point)
+            && (id != start_id || self.cross_selection.is_some())
+        {
+            self.cross_selection = Some(anchor.min(cursor)..anchor.max(cursor));
+            self.redraw(cx);
         }
         if let Event::MouseUp(mouse) = event
             && mouse.button == MouseButton::PRIMARY
         {
+            self.source_anchor = None;
             let click = self
                 .pointer
                 .take()
